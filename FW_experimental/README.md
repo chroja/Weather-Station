@@ -178,17 +178,19 @@ const char serverName3[] = "https://xxxxxx-yyyyyy.tmep.cz";  // baterie
 
 ### 4.3 Přepínače v `FW_experimental.ino`
 
-Na začátku souboru jsou dva přepínače:
+Na začátku souboru jsou přepínače:
 
 ```cpp
 #define TEST_MODE
-#define TEST_SEND
+// #define TEST_SEND
+// #define TEST_ADJSENT
 ```
 
 | Přepínač | Zapnutý | Vypnutý |
 |---|---|---|
-| `TEST_MODE` | Použijí se testovací URL z config.h | Použijí se produkční URL |
+| `TEST_MODE` | Použijí se testovací URL ze `secrets.h` | Použijí se produkční URL |
 | `TEST_SEND` | Odešle jen jeden pevný CSV řádek (diagnostika spojení) | Normální provoz |
+| `TEST_ADJSENT` | Spustí 4 unit testy opravy adjSent a vypíše PASS/FAIL na Serial | Normální provoz |
 
 > Pro první testování nech `TEST_MODE` zapnutý. Pro produkci zakomentuj: `// #define TEST_MODE`
 
@@ -424,6 +426,11 @@ Po obnovení spojení se odešle:
 Každý buffer (NVS i RTC) má per-server offsety → žádné duplicity ani při výpadku jednoho serveru.
 
 Buffer/NVS se uvolní až po HTTP 200 od **všech tří serverů**.
+
+> **Poznámka k adjSent:** Po každé kompakci (`doCompact`, `flashAppend`) se offsety automaticky
+> přepočítají — s*Sent se posune zpět o počet sloučených záznamů, nebo zarovná na `startIdx`
+> pokud jsou některé záznamy z kompaktované oblasti ještě neodesláno. Bez této opravy by
+> při částečném odeslání + offline provozu mohlo dojít ke ztrátě záznamu.
 
 ### Paměť
 

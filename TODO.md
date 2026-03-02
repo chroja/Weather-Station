@@ -14,14 +14,12 @@
 - [x] secrets.h oddělení od config.h (URL serverů nejsou v gitu)
 - [x] Debug levely 0–3, automatická detekce USB připojení
 - [x] ESP32 interní teplota PCB (`temperatureRead()`) v měření a výpisu
+- [x] `adjSent` oprava v `doCompact()` a `flashAppend()` — per-server offsety se nyní správně
+  posouvají po každém memmove; přidán unit test `TEST_ADJSENT` (4 scénáře)
 
 ---
 
 ## Firmware — opravy chyb
-
-- [ ] **`adjSent` v `tieredCompact()` / `doCompact()`** — po kompakci tier0→tier1 se s1Sent/s2Sent/s3Sent
-  neaktualizují; při částečném odeslání + offline provozu může dojít ke ztrátě záznamu nebo
-  opakovanému odeslání. Stejný problém i ve `flashAppend()`.
 - [ ] **HTTP timeout** — HTTPClient používá výchozí timeout ESP32, který může přesáhnout SLEEP_SEC;
   při slabém signálu hrozí zaseknutí bootu. Nastavit explicitní timeout (např. 8 s).
 

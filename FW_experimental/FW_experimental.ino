@@ -17,7 +17,8 @@
 
 // ── Přepínač testovacího provozu ─────────────────────────────────────────────
 #define TEST_MODE
-// #define TEST_SEND   // diagnostika: odeslat pevný CSV řádek místo bufferu
+//#define TEST_SEND      // diagnostika: odeslat pevný CSV řádek místo bufferu
+//#define TEST_ADJSENT   // jednotkový test: ověří opravu adjSent po tieredCompact/flashAppend
 
 #include "config.h"
 #include <Wire.h>
@@ -312,6 +313,11 @@ void flashAppend() {
     if (bufferCount > BUFFER_MAX)
         bufferCount = BUFFER_MAX;
 
+    // Opravit per-server offsety po odebrání prvních 6 tier1 záznamů z čela bufferu
+    if (s1Sent >= 6) s1Sent -= 6; else s1Sent = 0;
+    if (s2Sent >= 6) s2Sent -= 6; else s2Sent = 0;
+    if (s3Sent >= 6) s3Sent -= 6; else s3Sent = 0;
+
     // ---- NVS část zůstává stejná ----
     nvsEnsureLoaded();
 
@@ -356,6 +362,14 @@ void tieredCompact() {
 
         if (bufferCount > BUFFER_MAX)
             bufferCount = BUFFER_MAX;
+
+        // Opravit per-server offsety — memmove posunul záznamy, indexy by jinak stály
+        auto adjSent = [&](uint8_t& sent) {
+            if (sent <= startIdx)     return;           // před kompakcí → beze změny
+            if (sent >= startIdx + n) sent -= (n - 1); // za kompakcí → posunout zpět
+            else                      sent  = startIdx; // uvnitř → tier1 avg ještě neodesláno
+        };
+        adjSent(s1Sent); adjSent(s2Sent); adjSent(s3Sent);
 
         DLOG(1, "  [RTC] Kompakce tier0→tier1  (%u×→1×)  buffer: %u/%u\n",
              n, bufferCount, (uint8_t)BUFFER_MAX);
@@ -614,6 +628,89 @@ void sendTest() {
 #endif
 
 // =============================================================================
+// Jednotkový test adjSent (aktivovat: #define TEST_ADJSENT)
+// =============================================================================
+
+#ifdef TEST_ADJSENT
+void testAdjSent() {
+    uint8_t fails = 0;
+
+    // ── Test 1: doCompact — s*Sent za kompakcí (posunout zpět) ───────────────
+    // Stav: 70 tier0, S1+S3 odeslaly 69, S2 nic
+    // Po compact(startIdx=0, n=10): bufferCount=61, s1=60, s2=0, s3=60
+    bufferCount = 70;
+    for (uint8_t i = 0; i < 70; i++) {
+        buffer[i] = {}; buffer[i].tier = 0;
+        buffer[i].timestamp = 1700000000UL + i * 60;
+    }
+    s1Sent = 69; s2Sent = 0; s3Sent = 69;
+    tieredCompact();
+    if (bufferCount != 61 || s1Sent != 60 || s2Sent != 0 || s3Sent != 60) {
+        Serial.printf("  [FAIL] test1: bc=%u s1=%u s2=%u s3=%u  (exp 61/60/0/60)\n",
+                      bufferCount, s1Sent, s2Sent, s3Sent);
+        fails++;
+    } else { Serial.println("  [PASS] test1: doCompact — posun zpět"); }
+
+    // ── Test 2: doCompact — s*Sent uvnitř kompakcí (zarovnat na startIdx) ───
+    // Stav: 70 tier0, S1 odeslal 5 (uvnitř prvních 10), S3 vše, S2 nic
+    // Po compact(0,10): s1=0 (zarovnáno), s2=0, s3=60
+    bufferCount = 70;
+    for (uint8_t i = 0; i < 70; i++) {
+        buffer[i] = {}; buffer[i].tier = 0;
+        buffer[i].timestamp = 1700000000UL + i * 60;
+    }
+    s1Sent = 5; s2Sent = 0; s3Sent = 69;
+    tieredCompact();
+    if (bufferCount != 61 || s1Sent != 0 || s2Sent != 0 || s3Sent != 60) {
+        Serial.printf("  [FAIL] test2: bc=%u s1=%u s2=%u s3=%u  (exp 61/0/0/60)\n",
+                      bufferCount, s1Sent, s2Sent, s3Sent);
+        fails++;
+    } else { Serial.println("  [PASS] test2: doCompact — zarovnání uvnitř"); }
+
+    // ── Test 3: flashAppend — s*Sent >= 6 (posunout zpět) ────────────────────
+    // Stav: 42 tier1, S1+S3 odeslaly 40, S2 nic
+    // Po flashAppend: bufferCount=36, s1=34, s2=0, s3=34
+    bufferCount = 42;
+    for (uint8_t i = 0; i < 42; i++) {
+        buffer[i] = {}; buffer[i].tier = 1;
+        buffer[i].timestamp = 1700000000UL + i * 600;
+    }
+    s1Sent = 40; s2Sent = 0; s3Sent = 40;
+    nvsLoaded = true; nvsCount = 0;  // lazy load přeskočit, NVS zapíše 1 testovací záznam
+    tieredCompact();
+    if (bufferCount != 36 || s1Sent != 34 || s2Sent != 0 || s3Sent != 34) {
+        Serial.printf("  [FAIL] test3: bc=%u s1=%u s2=%u s3=%u  (exp 36/34/0/34)\n",
+                      bufferCount, s1Sent, s2Sent, s3Sent);
+        fails++;
+    } else { Serial.println("  [PASS] test3: flashAppend — posun zpět"); }
+
+    // ── Test 4: flashAppend — s*Sent < 6 (zarovnat na 0) ─────────────────────
+    // Stav: 42 tier1, S1 odeslal 3 (méně než 6), S2 nic, S3 vše
+    // Po flashAppend: s1=0, s2=0, s3=34
+    bufferCount = 42;
+    for (uint8_t i = 0; i < 42; i++) {
+        buffer[i] = {}; buffer[i].tier = 1;
+        buffer[i].timestamp = 1700000000UL + i * 600;
+    }
+    s1Sent = 3; s2Sent = 0; s3Sent = 40;
+    nvsLoaded = true; nvsCount = 0;
+    tieredCompact();
+    if (bufferCount != 36 || s1Sent != 0 || s2Sent != 0 || s3Sent != 34) {
+        Serial.printf("  [FAIL] test4: bc=%u s1=%u s2=%u s3=%u  (exp 36/0/0/34)\n",
+                      bufferCount, s1Sent, s2Sent, s3Sent);
+        fails++;
+    } else { Serial.println("  [PASS] test4: flashAppend — zarovnání pod 6"); }
+
+    Serial.printf("  → Výsledek: %s (%u/%u testů OK)\n\n",
+                  fails == 0 ? "VSE PROSEL" : "CHYBY!", 4 - fails, 4);
+
+    // Reset pro normální provoz
+    bufferCount = 0; s1Sent = s2Sent = s3Sent = 0;
+    nvsLoaded = false; nvsCount = 0;
+}
+#endif
+
+// =============================================================================
 // Hlavní program
 // =============================================================================
 
@@ -625,6 +722,11 @@ void setup() {
     Serial.begin(115200);
     delay(100);  // čas pro USB CDC enumeraci
     debugLevel = Serial ? DEBUG_LEVEL : 0;
+
+#ifdef TEST_ADJSENT
+    Serial.println("\n[TEST_ADJSENT] Spouštím testy adjSent...");
+    testAdjSent();
+#endif
 
     pinMode(PIN_I2C_PWR, OUTPUT);
     digitalWrite(PIN_I2C_PWR, HIGH);
