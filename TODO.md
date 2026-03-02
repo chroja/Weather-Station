@@ -16,6 +16,14 @@
 - [x] ESP32 interní teplota PCB (`temperatureRead()`) v měření a výpisu
 - [x] `adjSent` oprava v `doCompact()` a `flashAppend()` — per-server offsety se nyní správně
   posouvají po každém memmove; přidán unit test `TEST_ADJSENT` (4 scénáře)
+- [x] **Server 3 jako diagnostické centrum** — G1=PCB teplota, G2=počet výpadků napájení (NVS),
+  G3=délka předchozího cyklu v s; voltage sloupec = baterie
+- [x] **Minimum sleep 30 s** — při překročení SLEEP_SEC se spí min 30 s (ochrana před rychlou smyčkou)
+- [x] **CLEAR_BUFFERS** — jednorázový compile-time přepínač; po nahrání zavolá `clearAllBuffers()` která
+  resetuje RTC buffer a zapíše `cnt=0` do NVS flash (smaže i hodinové průměry); po použití zakomentovat
+- [x] **HTTP_STALE_RESPONSE automatický skip** — při HTTP 400 s odpovědí obsahující řetězec z `config.h`
+  se nejstarší záznam přeskočí (`sent++`) a retry proběhne ve stejném bootu; takhle se buffer postupně
+  vyčistí bez zásahu uživatele (každý server zpracovává staré záznamy nezávisle)
 
 ---
 
@@ -37,7 +45,7 @@
 
 ## Firmware — diagnostika
 
-- [ ] **Počítadlo výpadků napájení v NVS** — kolikrát nastal `powerLoss` od prvního spuštění
+- [x] **Počítadlo výpadků napájení v NVS** — viz Hotovo → `powerLossCnt` (klíč `ploss`)
 - [ ] **`esp_reset_reason()`** — zobrazit v záhlaví příčinu wakeup
   (deep sleep timer vs. watchdog reset vs. výpadek napájení)
 

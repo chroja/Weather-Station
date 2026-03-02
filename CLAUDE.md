@@ -2,22 +2,21 @@
 
 ## Co je tento projekt
 Firmware pro **LaskaKit DIY Mini Weather Station** (ESP32-C3).
-`FW_experimental/` je aktivně vyvíjená verze. `FW/` je starší referenční verze (neupravovat).
+`FW_experimental/` je aktivně vyvíjená verze. `FW_old/` je starší referenční verze (neupravovat).
 
 ---
 
 ## Struktura projektu
 
 ```
-Weather_Station_Mini-main/
+Weather-Station/
 ├── FW_experimental/
 │   ├── FW_experimental.ino   ← aktivní firmware (upravovat zde)
 │   ├── config.h              ← konstanty: SLEEP_SEC, BUFFER_MAX, DEBUG_LEVEL, ...
 │   ├── secrets.h             ← privátní URL serverů (gitignore, uživatel spravuje)
 │   ├── secrets.h.example     ← šablona pro secrets.h (committed)
 │   └── README.md             ← popis experimentální verze
-├── FW/                       ← starší verze (referenční, neupravovat)
-├── SW/tmep/                  ← původní kód od LaskaKit (referenční, neupravovat)
+├── FW_old/                   ← starší verze (referenční, neupravovat)
 ├── 3D/                       ← 3D tisk krabičky/radiačního štítu
 ├── img/                      ← fotografie hardware
 ├── TODO.md                   ← plán dalšího vývoje
@@ -65,17 +64,18 @@ Typický cyklus: ~3–10 s aktivní, 60 s spánek.
 ### Dvouúrovňový buffer
 
 **RTC RAM** (přežije deep sleep, reset při výpadku napájení):
-- `buffer[BUFFER_MAX]` = 112 slotů × 36 B = 4 032 B
+- `buffer[BUFFER_MAX]` = 112 slotů × 40 B = 4 480 B
 - Tier 0 (1min): max 70 záznamů; 10× tier0 → 1× tier1
 - Tier 1 (10min): max 42 záznamů; 6× tier1 → 1× NVS tier2
 - Pokrytí: ~7 hodin (před kompakcí do NVS)
 
 **NVS flash** (`Preferences`, přežije výpadek napájení, lazy load):
-- `nvsLocalBuf[FLASH_MAX]` = 150 hodinových průměrů × 36 B = 5 400 B (statická globální proměnná)
+- `nvsLocalBuf[FLASH_MAX]` = 150 hodinových průměrů × 40 B = 6 000 B (statická globální proměnná)
 - FIFO; po naplnění se zahazuje nejstarší záznam
 - Pokrytí: 150 hodin (~6.25 dní)
+- Klíče: `cnt` (počet), `buf` (data), `ploss` (počítadlo výpadků)
 
-**Detekce výpadku napájení:** `RTC_MAGIC = 0x4D455445` — při neshodě se RTC proměnné resetují.
+**Detekce výpadku napájení:** `RTC_MAGIC = 0x4D455447` — při neshodě se RTC proměnné resetují.
 
 ### Per-server tracking
 Každý ze tří serverů má vlastní offset v RTC (s1Sent/s2Sent/s3Sent) a NVS (nvs1Sent/nvs2Sent/nvs3Sent).
@@ -97,11 +97,18 @@ Záznamy se z bufferu odstraní, až je přijmou všechny tři servery.
 Tři servery, každý přijímá CSV tělo (jeden řádek = jedno měření):
 - `serverName1` → S1: T;RH;P (teplota, vlhkost, tlak)
 - `serverName2` → S2: ALS;UVS;absH (světlo, UV, absolutní vlhkost)
-- `serverName3` → S3: batV;;
+- `serverName3` → S3: pcbTemp;powerLossCnt;runDuration (diagnostika stanice)
 
 Formát řádku: `YYYY-MM-DD HH:MM:SS;G1;G2;G3;voltage;rssi`
 
 HTTPS s `WiFiClientSecure.setInsecure()` (bez ověření certifikátu).
+
+### CLEAR_BUFFERS a HTTP_STALE_RESPONSE
+- `#define CLEAR_BUFFERS` (zakomentované) v `.ino` — při zapnutí zavolá `clearAllBuffers()`:
+  resetuje RTC buffer, NVS flush s `cnt=0`, nuluje per-server offsety. Jednorázové použití.
+- `HTTP_STALE_RESPONSE` v `config.h` — řetězec hledaný v těle HTTP 400 odpovědi.
+  Pokud shoda → `httpPostCsv()` vrátí `HTTP_STALE (-2)` → sendNvsServer/sendServer skip nejstarší
+  záznam (`sent++`) a ihned retryuje. `""` = vypnuto.
 
 ### secrets.h
 URL serverů jsou v `secrets.h` (gitignorovaný). Šablona: `secrets.h.example`.
@@ -118,6 +125,12 @@ Přepínač `#define TEST_MODE` v `.ino` (před `#include "config.h"`) vybírá 
 - ✓ Batch CSV POST místo GET
 - ✓ WiFi+NTP před bufferem, zahazování timestamp=0 měření
 - ✓ secrets.h oddělení od config.h
+- ✓ adjSent oprava v doCompact/flashAppend + unit test TEST_ADJSENT
+- ✓ S3 jako diagnostické centrum (pcbTemp, powerLossCnt, runDuration)
+- ✓ Minimum sleep 30 s (ochrana při překročení SLEEP_SEC)
+- ✓ CLEAR_BUFFERS compile-time switch — `clearAllBuffers()` smaže RTC i NVS; po použití zakomentovat
+- ✓ HTTP_STALE_RESPONSE auto-skip — při HTTP 400 + shoda řetězce z `config.h` přeskočí nejstarší záznam
+  a ihned retryuje; buffer se vyčistí postupně ve stejném bootu bez zásahu uživatele
 
 ### Střednědobé (hardware)
 - DS3231 RTC — přidat až bude k dispozici modul

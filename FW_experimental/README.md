@@ -107,7 +107,7 @@ Na [tmep.cz](https://tmep.cz) vytvoř tři nové senzory:
 |---|---|---|
 | S1 | Meteo — teplota/vlhkost/tlak | G1=teplota (°C), G2=rel. vlhkost (%), G3=tlak (hPa) |
 | S2 | Meteo — světlo/UV/abs.vlhkost | G1=světlo ALS, G2=UV index, G3=abs. vlhkost (g/m³) |
-| S3 | Meteo — baterie/PCB teplota | G1=PCB teplota (°C), G2=napětí baterie (V) |
+| S3 | Meteo — diagnostika | G1=PCB teplota (°C), G2=výpadky napájení, G3=délka runu (s) |
 
 ### 3.2 Zjistit URL senzorů
 
@@ -135,7 +135,9 @@ V nastavení každého senzoru nastav popisky kanálů:
 
 **S3:**
 - Kanál 1 (G1): `PCB teplota` — jednotka `°C`  *(interní senzor ESP32, ±3–5°C odchylka)*
-- Kanál 2 (G2): `Baterie` — jednotka `V`
+- Kanál 2 (G2): `Výpadky napájení` — počet celkem od prvního spuštění (perzistentní v NVS)
+- Kanál 3 (G3): `Délka runu` — jednotka `s`  *(délka předchozího cyklu, 0 při prvním bootu)*
+- Kanál 4 (voltage): `Baterie` — jednotka `V`
 
 ---
 
@@ -184,6 +186,7 @@ Na začátku souboru jsou přepínače:
 #define TEST_MODE
 // #define TEST_SEND
 // #define TEST_ADJSENT
+// #define CLEAR_BUFFERS
 ```
 
 | Přepínač | Zapnutý | Vypnutý |
@@ -191,8 +194,11 @@ Na začátku souboru jsou přepínače:
 | `TEST_MODE` | Použijí se testovací URL ze `secrets.h` | Použijí se produkční URL |
 | `TEST_SEND` | Odešle jen jeden pevný CSV řádek (diagnostika spojení) | Normální provoz |
 | `TEST_ADJSENT` | Spustí 4 unit testy opravy adjSent a vypíše PASS/FAIL na Serial | Normální provoz |
+| `CLEAR_BUFFERS` | Při startu smaže veškerá neodeslaná data (RTC buffer + NVS flash) | Normální provoz |
 
 > Pro první testování nech `TEST_MODE` zapnutý. Pro produkci zakomentuj: `// #define TEST_MODE`
+
+> **CLEAR_BUFFERS** je jednorázové — po nahrání hned zakomentuj a nahraj znovu bez něj. Viz [sekce 14 — Stará data v NVS blokují odesílání](#stará-data-v-nvs-blokují-odesílání).
 
 ### 4.4 Ostatní parametry `config.h`
 
@@ -202,6 +208,7 @@ Na začátku souboru jsou přepínače:
 | `WIFI_TIMEOUT_SEC` | `10` | `10` | Max. čekání na WiFi |
 | `DEBUG_LEVEL` | `3` | `2` | Výchozí debug level (s USB kabelem) |
 | `TIMEZONE` | `CET-1CEST,...` | dle umístění | POSIX TZ string |
+| `HTTP_STALE_RESPONSE` | `"older than last known value"` | beze změny | Řetězec hledaný v HTTP 400 odpovědi; shoda = přeskočit nejstarší záznam a okamžitě retryovat; `""` = vypnuto |
 
 > **SLEEP_SEC = 15** je jen pro testování — baterie by nevydržela. Pro venkovní provoz nastav **60** (1 měření/min).
 
@@ -464,7 +471,7 @@ Každý server má vlastní offset — sleduje kolik záznamů přijal.
 |---|---|---|---|---|
 | S1 | teplota (°C) | rel. vlhkost (%) | tlak (hPa) | baterie (V), RSSI |
 | S2 | světlo ALS | UV index | abs. vlhkost (g/m³) | baterie (V), RSSI |
-| S3 | PCB teplota (°C) | baterie (V) | 0 | baterie (V), RSSI |
+| S3 | PCB teplota (°C) | výpadky napájení | délka runu (s) | baterie (V), RSSI |
 
 ### Odolnost vůči výpadku jednoho serveru
 
@@ -585,7 +592,7 @@ wakeup
    │
    ├─ WiFi.disconnect()
    ├─ I2C power OFF
-   └─ deep sleep na max(1s, SLEEP_SEC×1000 - elapsed_ms)
+   └─ deep sleep na max(30s, SLEEP_SEC×1000 - elapsed_ms)
 ```
 
 Veškerá logika je v `setup()`. `loop()` je prázdný — po `esp_deep_sleep_start()` se nikdy nedostane.
@@ -602,6 +609,8 @@ RTC_DATA_ATTR bool        wifiConfigured;  // příznak prvního WiFi nastavení
 RTC_DATA_ATTR uint8_t     s1Sent, s2Sent, s3Sent;         // per-server offsety (RTC)
 RTC_DATA_ATTR uint8_t     nvs1Sent, nvs2Sent, nvs3Sent;   // per-server offsety (NVS)
 RTC_DATA_ATTR uint8_t     nvsCount;        // cache počtu NVS záznamů
+RTC_DATA_ATTR uint8_t     lastRunDuration; // délka předchozího cyklu v s (uložena před spánkem)
+RTC_DATA_ATTR uint8_t     powerLossCnt;    // počet výpadků napájení (z NVS)
 RTC_DATA_ATTR uint8_t     s1Fail, s2Fail, s3Fail;
 RTC_DATA_ATTR int16_t     s1LastCode, s2LastCode, s3LastCode;
 RTC_DATA_ATTR Measurement buffer[BUFFER_MAX];  // 112 × 40 B = 4 480 B
@@ -612,8 +621,9 @@ RTC_DATA_ATTR Measurement buffer[BUFFER_MAX];  // 112 × 40 B = 4 480 B
 Hodinové průměry (tier2) jsou uloženy v `Preferences` namespace `"meteo"`:
 
 ```
-klíč "cnt"  → uint8_t  — počet uložených záznamů
-klíč "buf"  → bytes    — nvsCount × sizeof(Measurement)
+klíč "cnt"   → uint8_t  — počet uložených záznamů
+klíč "buf"   → bytes    — nvsCount × sizeof(Measurement)
+klíč "ploss" → uint8_t  — počítadlo výpadků napájení (persistentní)
 ```
 
 Data se načítají **lazy** — jen při `flashAppend()` nebo `sendNvsBuffered()`.
@@ -697,6 +707,26 @@ RTC RAM (minutová + desetiminutová data) se při výpadku napájení vynuluje.
 Data v NVS flash (hodinové průměry) přežijí a odešlou se při příštím WiFi připojení.
 Zobrazí se hlášení `[!] VÝPADEK NAPÁJENÍ — RTC resetován` v záhlaví.
 
+### Stará data v NVS blokují odesílání
+
+**Příznaky:** Při každém bootu `HTTP 400 — Date is older than last known value`, buffer se nemaže.
+
+**Příčina:** V NVS flash jsou záznamy s timestampem starším než poslední hodnota přijatá serverem
+(např. po flashování firmwaru s `TEST_ADJSENT`, nebo po resetu systémového času).
+
+**Automatická oprava:** Pokud je `HTTP_STALE_RESPONSE` v `config.h` nastaven (výchozí stav),
+firmware nejstarší záznam automaticky přeskočí a retryuje ve stejném bootu — buffer se postupně
+vyčistí sám bez zásahu uživatele.
+
+**Ruční okamžité smazání:** Pokud chceš zahodit vše najednou:
+1. V `FW_experimental.ino` odkomentuj: `#define CLEAR_BUFFERS`
+2. Nahraj firmware
+3. Záhlaví vypíše: `[CLEAR_BUFFERS] RTC buffer + NVS smazány. Zakomentuj CLEAR_BUFFERS a nahraj znovu.`
+4. Zakomentuj `CLEAR_BUFFERS` zpět a nahraj znovu
+
+> **Pozor:** `CLEAR_BUFFERS` smaže i legitimní neodeslaná data — použij jen když si jistý, že buffer
+> obsahuje jen zastaralé nebo testovací záznamy.
+
 ### Deska nejde nahrát
 
 - Drž tlačítko **BOOT** a stiskni **RESET** → pustit BOOT
@@ -763,13 +793,15 @@ NVS klíče: "cnt" + "buf"              ← namespace "meteo" v Preferences
 Zápisy: ~1×/hodinu → výdrž 11+ let
 ```
 
-### Struktura záznamu `Measurement` (36 B)
+### Struktura záznamu `Measurement` (40 B)
 
 | Pole | Typ | Velikost | Popis |
 |---|---|---|---|
 | `timestamp` | `uint32_t` | 4 B | Unix UTC (0 = neznámý) |
 | `tier` | `uint8_t` | 1 B | Vrstva: 0=1min, 1=10min, 2=1h |
-| `_pad[3]` | `uint8_t[3]` | 3 B | Zarovnání na 4 B |
+| `powerLossCnt` | `uint8_t` | 1 B | Počet výpadků napájení od 1. spuštění (z NVS, max 255) |
+| `runDuration` | `uint8_t` | 1 B | Délka předchozího cyklu v s (0 = první boot / neznámý) |
+| `_pad` | `uint8_t` | 1 B | Zarovnání na 4 B |
 | `temperature` | `float` | 4 B | °C (-100 = nedostupný) |
 | `relHumidity` | `float` | 4 B | % RH (-1 = nedostupný) |
 | `pressure` | `float` | 4 B | hPa (-1 = nedostupný) |

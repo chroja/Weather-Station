@@ -42,6 +42,12 @@
 //
 #define FLASH_MAX       150   // max hodinových průměrů v NVS
 
+// ── HTTP chování ──────────────────────────────────────────────────────────────
+// Pokud server vrátí HTTP 400 a odpověď obsahuje tento řetězec, nejstarší záznam
+// v bufferu se přeskočí (datum je starší než poslední přijatá hodnota na serveru).
+// Nastav na "" pro vypnutí automatického přeskakování.
+#define HTTP_STALE_RESPONSE "older than last known value"
+
 // ── Debug ─────────────────────────────────────────────────────────────────────
 // 0 = ticho (produkce bez USB) | 1 = chyby + souhrn | 2 = normální | 3 = verbose (CSV)
 // Pokud USB CDC není připojeno, debug level se automaticky nastaví na 0.

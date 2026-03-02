@@ -17,8 +17,12 @@
 
 // ── Přepínač testovacího provozu ─────────────────────────────────────────────
 #define TEST_MODE
-//#define TEST_SEND      // diagnostika: odeslat pevný CSV řádek místo bufferu
-//#define TEST_ADJSENT   // jednotkový test: ověří opravu adjSent po tieredCompact/flashAppend
+//#define TEST_SEND        // diagnostika: odeslat pevný CSV řádek místo bufferu
+//#define TEST_ADJSENT     // jednotkový test: ověří opravu adjSent po tieredCompact/flashAppend
+//#define CLEAR_BUFFERS    // jednorázové vymazání všech bufferů (RTC + NVS); po nahrání zakomentuj
+
+// Interní kód: HTTP 400 + staré datum → přeskočit nejstarší záznam (viz HTTP_STALE_RESPONSE)
+#define HTTP_STALE  (-2)
 
 #include "config.h"
 #include <Wire.h>
@@ -41,13 +45,16 @@
 // ── Hardwarové konstanty ──────────────────────────────────────────────────────
 #define BME280_ADDR  0x77
 #define ADC_TO_BATV  1.7857f   // kalibrováno: 2240 mV ADC = 4.0 V
-#define RTC_MAGIC    0x4D455446UL  // "METF" — detekce výpadku napájení (zvýšit při změně struktury)
+#define RTC_MAGIC    0x4D455447UL  // "METG" — detekce výpadku napájení (zvýšit při změně struktury)
 
 // ── Datová struktura jednoho měření ──────────────────────────────────────────
+// sizeof = 40 B (4+1+1+1+1 + 8×4)
 struct Measurement {
     uint32_t timestamp;    // Unix UTC (0 = neznámý)
     uint8_t  tier;         // vrstva: 0=1min  1=10min  2=1h
-    uint8_t  _pad[3];      // padding na 4 B hranici → sizeof = 40 B
+    uint8_t  powerLossCnt; // počet výpadků napájení od prvního spuštění (z NVS, max 255)
+    uint8_t  runDuration;  // délka předchozího boot cyklu v s (0 = první boot / neznámý)
+    uint8_t  _pad;         // padding na 4 B hranici
     float    temperature;  // °C   (-100 = nedostupný)
     float    relHumidity;  // % RH (  -1 = nedostupný)
     float    pressure;     // hPa  (  -1 = nedostupný)
@@ -74,6 +81,9 @@ RTC_DATA_ATTR uint8_t     nvs1Sent       = 0;
 RTC_DATA_ATTR uint8_t     nvs2Sent       = 0;
 RTC_DATA_ATTR uint8_t     nvs3Sent       = 0;
 RTC_DATA_ATTR uint8_t     nvsCount       = 0;      // cache počtu záznamů v NVS
+// Diagnostika
+RTC_DATA_ATTR uint8_t     lastRunDuration = 0;  // délka předchozího cyklu v s (uložena před spánkem)
+RTC_DATA_ATTR uint8_t     powerLossCnt    = 0;  // počet výpadků napájení (načten z NVS při powerLoss)
 // Per-server statistiky selhání
 RTC_DATA_ATTR uint8_t     s1Fail         = 0;
 RTC_DATA_ATTR uint8_t     s2Fail         = 0;
@@ -260,10 +270,12 @@ Measurement computeAverage(uint8_t startIdx, uint8_t n, uint8_t toTier) {
     float tSum=0, rhSum=0, pSum=0, ahSum=0, alsSum=0, uvsSum=0, batSum=0, pcbSum=0;
     uint8_t vT=0, vRH=0, vP=0, vAH=0, vALS=0, vUVS=0, vPCB=0;
     uint32_t tsSum = 0;
+    uint16_t rdSum = 0;
     for (uint8_t i = 0; i < n; i++) {
         const Measurement& r = buffer[startIdx + i];
         tsSum  += r.timestamp / n;
         batSum += r.batVoltage;
+        rdSum  += r.runDuration;
         if (r.temperature > -99.f) { tSum   += r.temperature;  vT++;   }
         if (r.relHumidity  >= 0.f) { rhSum  += r.relHumidity;  vRH++;  }
         if (r.pressure     >= 0.f) { pSum   += r.pressure;     vP++;   }
@@ -273,16 +285,18 @@ Measurement computeAverage(uint8_t startIdx, uint8_t n, uint8_t toTier) {
         if (r.pcbTemp      > -99.f){ pcbSum += r.pcbTemp;      vPCB++; }
     }
     Measurement avg = {};
-    avg.tier        = toTier;
-    avg.timestamp   = tsSum;
-    avg.batVoltage  = batSum / n;
-    avg.temperature = vT   ? tSum   / vT   : -100.f;
-    avg.relHumidity = vRH  ? rhSum  / vRH  : -1.f;
-    avg.pressure    = vP   ? pSum   / vP   : -1.f;
-    avg.absHumidity = vAH  ? ahSum  / vAH  : -1.f;
-    avg.als         = vALS ? alsSum / vALS : -1.f;
-    avg.uvs         = vUVS ? uvsSum / vUVS : -1.f;
-    avg.pcbTemp     = vPCB ? pcbSum / vPCB : -100.f;
+    avg.tier         = toTier;
+    avg.timestamp    = tsSum;
+    avg.batVoltage   = batSum / n;
+    avg.runDuration  = (uint8_t)(rdSum / n);
+    avg.powerLossCnt = buffer[startIdx + n - 1].powerLossCnt;  // poslední (nejvyšší) hodnota
+    avg.temperature  = vT   ? tSum   / vT   : -100.f;
+    avg.relHumidity  = vRH  ? rhSum  / vRH  : -1.f;
+    avg.pressure     = vP   ? pSum   / vP   : -1.f;
+    avg.absHumidity  = vAH  ? ahSum  / vAH  : -1.f;
+    avg.als          = vALS ? alsSum / vALS : -1.f;
+    avg.uvs          = vUVS ? uvsSum / vUVS : -1.f;
+    avg.pcbTemp      = vPCB ? pcbSum / vPCB : -100.f;
     return avg;
 }
 
@@ -428,11 +442,11 @@ String buildCsvFrom(const Measurement* buf, uint8_t from, uint8_t count,
             csv += buildCsvRow(m.timestamp,
                                String(m.als, 2), String(m.uvs, 2),
                                String(m.absHumidity, 4), m.batVoltage, rssi);
-        else
+        else  // srv == 3: diagnostika (PCB temp + výpadky napájení + délka runu)
             csv += buildCsvRow(m.timestamp,
                                m.pcbTemp > -99.f ? String(m.pcbTemp, 1) : "",
-                               String(m.batVoltage, 3),
-                               "0",
+                               String(m.powerLossCnt),
+                               m.runDuration > 0 ? String(m.runDuration) : "",
                                m.batVoltage, rssi);
     }
     csv.trim();
@@ -488,6 +502,13 @@ int httpPostCsv(const char* label, const char* url, const String& csvBody,
         failCount = 0;
         DLOG(1, "    → HTTP 200 OK  (%lu ms)\n", millis() - t);
     } else {
+        // Staré datum — server odmítl záznam, přeskočit (nevykazovat jako selhání)
+        if (code == 400
+                && sizeof(HTTP_STALE_RESPONSE) > 1
+                && resp.indexOf(HTTP_STALE_RESPONSE) >= 0) {
+            DLOG(1, "    → HTTP 400 staré datum — přeskočuji nejstarší záznam  (%lu ms)\n", millis() - t);
+            return HTTP_STALE;
+        }
         failCount++;
         DLOG(1, "    → HTTP %d  (%lu ms)  selhání #%u\n", code, millis() - t, failCount);
         if (debugLevel >= 2 && resp.length() > 0) {
@@ -541,15 +562,19 @@ void sendNvsBuffered(int rssi) {
 
     auto sendNvsServer = [&](uint8_t srv, const char* label, const char* url,
                               uint8_t& sent, uint8_t& fail, int16_t& lastCode) {
-        if (sent >= nvsCount) { DLOG(2, "  [%s] vše odesláno\n", label); return; }
-        String csv = buildCsvFrom(nvsLocalBuf, sent, nvsCount, srv, rssi);
-        if (httpPostCsv(label, url, csv, nvsCount - sent, fail, lastCode) == 200)
-            sent = nvsCount;
+        while (sent < nvsCount) {
+            String csv = buildCsvFrom(nvsLocalBuf, sent, nvsCount, srv, rssi);
+            int code = httpPostCsv(label, url, csv, nvsCount - sent, fail, lastCode);
+            if (code == 200)        { sent = nvsCount; return; }
+            else if (code == HTTP_STALE) sent++;   // přeskočit nejstarší, zkusit znovu
+            else                         return;   // jiná chyba → příští boot
+        }
+        DLOG(2, "  [%s] vše odesláno\n", label);
     };
 
-    sendNvsServer(1, "NVS/S1 T+RH+P",    serverName1, nvs1Sent, s1Fail, s1LastCode);
-    sendNvsServer(2, "NVS/S2 ALS+UV+AH", serverName2, nvs2Sent, s2Fail, s2LastCode);
-    sendNvsServer(3, "NVS/S3 baterie",   serverName3, nvs3Sent, s3Fail, s3LastCode);
+    sendNvsServer(1, "NVS/S1 T+RH+P",      serverName1, nvs1Sent, s1Fail, s1LastCode);
+    sendNvsServer(2, "NVS/S2 ALS+UV+AH",  serverName2, nvs2Sent, s2Fail, s2LastCode);
+    sendNvsServer(3, "NVS/S3 diagnostika", serverName3, nvs3Sent, s3Fail, s3LastCode);
 
     // Compact — smazat záznamy přijaté všemi třemi servery
     uint8_t compact = min({nvs1Sent, nvs2Sent, nvs3Sent});
@@ -584,15 +609,19 @@ void sendAllBuffered(int rssi) {
 
     auto sendServer = [&](uint8_t srv, const char* label, const char* url,
                           uint8_t& sent, uint8_t& fail, int16_t& lastCode) {
-        if (sent >= bufferCount) { DLOG(2, "  [%s] vše odesláno\n", label); return; }
-        String csv = buildCsvFrom(buffer, sent, bufferCount, srv, rssi);
-        if (httpPostCsv(label, url, csv, bufferCount - sent, fail, lastCode) == 200)
-            sent = bufferCount;
+        while (sent < bufferCount) {
+            String csv = buildCsvFrom(buffer, sent, bufferCount, srv, rssi);
+            int code = httpPostCsv(label, url, csv, bufferCount - sent, fail, lastCode);
+            if (code == 200)         { sent = bufferCount; return; }
+            else if (code == HTTP_STALE) sent++;   // přeskočit nejstarší, zkusit znovu
+            else                         return;   // jiná chyba → příští boot
+        }
+        DLOG(2, "  [%s] vše odesláno\n", label);
     };
 
-    sendServer(1, "RTC/S1 T+RH+P",    serverName1, s1Sent, s1Fail, s1LastCode);
-    sendServer(2, "RTC/S2 ALS+UV+AH", serverName2, s2Sent, s2Fail, s2LastCode);
-    sendServer(3, "RTC/S3 baterie",   serverName3, s3Sent, s3Fail, s3LastCode);
+    sendServer(1, "RTC/S1 T+RH+P",      serverName1, s1Sent, s1Fail, s1LastCode);
+    sendServer(2, "RTC/S2 ALS+UV+AH",  serverName2, s2Sent, s2Fail, s2LastCode);
+    sendServer(3, "RTC/S3 diagnostika", serverName3, s3Sent, s3Fail, s3LastCode);
 
     if (s1Fail > 0 || s2Fail > 0 || s3Fail > 0)
         DLOG(1, "  Selhání: S1=%u×(%d) S2=%u×(%d) S3=%u×(%d)\n",
@@ -704,9 +733,29 @@ void testAdjSent() {
     Serial.printf("  → Výsledek: %s (%u/%u testů OK)\n\n",
                   fails == 0 ? "VSE PROSEL" : "CHYBY!", 4 - fails, 4);
 
-    // Reset pro normální provoz
+    // Reset pro normální provoz — vymazat i testovací záznamy z NVS flash
     bufferCount = 0; s1Sent = s2Sent = s3Sent = 0;
-    nvsLoaded = false; nvsCount = 0;
+    nvs1Sent = nvs2Sent = nvs3Sent = 0;
+    nvsLoaded = true; nvsCount = 0;
+    nvsFlush();       // zapíše cnt=0 do NVS → testovací záznamy se nepřenesou do reálného provozu
+    nvsLoaded = false;
+}
+#endif
+
+// =============================================================================
+// Jednorázové vymazání bufferů (CLEAR_BUFFERS)
+// =============================================================================
+
+#ifdef CLEAR_BUFFERS
+void clearAllBuffers() {
+    bufferCount = 0;
+    s1Sent = s2Sent = s3Sent = 0;
+    nvs1Sent = nvs2Sent = nvs3Sent = 0;
+    lastRunDuration = 0;
+    nvsLoaded = true; nvsCount = 0;
+    nvsFlush();       // zapíše cnt=0 do NVS
+    nvsLoaded = false;
+    Serial.println("[CLEAR_BUFFERS] RTC buffer + NVS smazány. Zakomentuj CLEAR_BUFFERS a nahraj znovu.");
 }
 #endif
 
@@ -723,6 +772,9 @@ void setup() {
     delay(100);  // čas pro USB CDC enumeraci
     debugLevel = Serial ? DEBUG_LEVEL : 0;
 
+#ifdef CLEAR_BUFFERS
+    clearAllBuffers();
+#endif
 #ifdef TEST_ADJSENT
     Serial.println("\n[TEST_ADJSENT] Spouštím testy adjSent...");
     testAdjSent();
@@ -745,11 +797,15 @@ void setup() {
         s1Fail = s2Fail = s3Fail = 0;
         s1LastCode = s2LastCode = s3LastCode = 0;
         nvs1Sent = nvs2Sent = nvs3Sent = 0;
-        wifiConfigured = true;  // předpokládáme uložené WiFi credentials z NVS
-        // Načíst počet NVS záznamů ze flash
+        wifiConfigured  = true;  // předpokládáme uložené WiFi credentials z NVS
+        lastRunDuration = 0;     // neznámá délka předchozího cyklu po výpadku
+        // Načíst NVS metadata a inkrementovat počítadlo výpadků
         Preferences p;
-        p.begin("meteo", true);
-        nvsCount = p.getUChar("cnt", 0);
+        p.begin("meteo", false);
+        nvsCount     = p.getUChar("cnt",   0);
+        powerLossCnt = p.getUChar("ploss", 0);
+        if (powerLossCnt < 255) powerLossCnt++;
+        p.putUChar("ploss", powerLossCnt);
         p.end();
     }
 
@@ -806,14 +862,16 @@ void setup() {
     // ── Měření ───────────────────────────────────────────────────────────────
     DLOGLN(2, "\n[Měření]");
     Measurement m = {};
-    m.tier        = 0;
-    m.temperature = -100.0f;
-    m.pcbTemp     = -100.0f;
-    m.relHumidity = m.pressure = m.absHumidity = m.als = m.uvs = -1.0f;
-    m.batVoltage  = readBatVoltage();
-    m.pcbTemp     = temperatureRead();  // interní teplotní senzor ESP32 čipu (±3–5°C, bez kalibrace)
+    m.tier          = 0;
+    m.powerLossCnt  = powerLossCnt;     // počet výpadků napájení z NVS
+    m.runDuration   = lastRunDuration;  // délka předchozího cyklu (0 při prvním bootu)
+    m.temperature   = -100.0f;
+    m.pcbTemp       = -100.0f;
+    m.relHumidity   = m.pressure = m.absHumidity = m.als = m.uvs = -1.0f;
+    m.batVoltage    = readBatVoltage();
+    m.pcbTemp       = temperatureRead();  // interní teplotní senzor ESP32 čipu (±3–5°C, bez kalibrace)
     DLOG(2, "  ESP32 PCB: %.1f°C\n", m.pcbTemp);
-    m.timestamp   = getCurrentTimestamp();
+    m.timestamp     = getCurrentTimestamp();
     if (shtOK) readSHT40(m);
     if (bmeOK) readBME280(m);
     if (ltrOK) readLTR390(m);
@@ -884,9 +942,10 @@ void setup() {
     // ── Spánek ────────────────────────────────────────────────────────────────
     digitalWrite(PIN_I2C_PWR, LOW);
     unsigned long elapsedMs = millis() - startMs;
+    lastRunDuration = (uint8_t)min(elapsedMs / 1000UL, 255UL);  // uložit pro příští cyklus
     uint64_t sleepUs = (SLEEP_SEC * 1000UL > elapsedMs)
                        ? ((uint64_t)(SLEEP_SEC * 1000UL - elapsedMs)) * 1000ULL
-                       : 1000000ULL;
+                       : 30000000ULL;  // minimum 30 s (ochrana při překročení SLEEP_SEC)
     DLOG(1, "\n[Spánek] běh:%lu ms → spánek:%llu ms\n\n", elapsedMs, sleepUs / 1000ULL);
     esp_sleep_enable_timer_wakeup(sleepUs);
     esp_deep_sleep_start();
