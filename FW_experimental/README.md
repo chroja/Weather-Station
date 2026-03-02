@@ -107,7 +107,7 @@ Na [tmep.cz](https://tmep.cz) vytvoř tři nové senzory:
 |---|---|---|
 | S1 | Meteo — teplota/vlhkost/tlak | G1=teplota (°C), G2=rel. vlhkost (%), G3=tlak (hPa) |
 | S2 | Meteo — světlo/UV/abs.vlhkost | G1=světlo ALS, G2=UV index, G3=abs. vlhkost (g/m³) |
-| S3 | Meteo — baterie | G1=napětí baterie (V) |
+| S3 | Meteo — baterie/PCB teplota | G1=PCB teplota (°C), G2=napětí baterie (V) |
 
 ### 3.2 Zjistit URL senzorů
 
@@ -134,7 +134,8 @@ V nastavení každého senzoru nastav popisky kanálů:
 - Kanál 3 (G3): `Abs. vlhkost` — jednotka `g/m³`
 
 **S3:**
-- Kanál 1 (G1): `Baterie` — jednotka `V`
+- Kanál 1 (G1): `PCB teplota` — jednotka `°C`  *(interní senzor ESP32, ±3–5°C odchylka)*
+- Kanál 2 (G2): `Baterie` — jednotka `V`
 
 ---
 
@@ -427,8 +428,8 @@ Buffer/NVS se uvolní až po HTTP 200 od **všech tří serverů**.
 ### Paměť
 
 ```
-RTC RAM:  112 slotů × 36 B = 4 032 B  (limit: 8 192 B)
-NVS flash: 150 slotů × 36 B = 5 400 B  (limit Preferences namespace: 508 KB)
+RTC RAM:  112 slotů × 40 B = 4 480 B  (limit: 8 192 B)
+NVS flash: 150 slotů × 40 B = 6 000 B  (limit Preferences namespace: 508 KB)
 NVS zápisy: ~1×/hodinu = ~8 760/rok → opotřebení zanedbatelné (výdrž 11+ let)
 ```
 
@@ -456,7 +457,7 @@ Každý server má vlastní offset — sleduje kolik záznamů přijal.
 |---|---|---|---|---|
 | S1 | teplota (°C) | rel. vlhkost (%) | tlak (hPa) | baterie (V), RSSI |
 | S2 | světlo ALS | UV index | abs. vlhkost (g/m³) | baterie (V), RSSI |
-| S3 | baterie (V) | — | — | baterie (V), RSSI |
+| S3 | PCB teplota (°C) | baterie (V) | 0 | baterie (V), RSSI |
 
 ### Odolnost vůči výpadku jednoho serveru
 
@@ -596,7 +597,7 @@ RTC_DATA_ATTR uint8_t     nvs1Sent, nvs2Sent, nvs3Sent;   // per-server offsety 
 RTC_DATA_ATTR uint8_t     nvsCount;        // cache počtu NVS záznamů
 RTC_DATA_ATTR uint8_t     s1Fail, s2Fail, s3Fail;
 RTC_DATA_ATTR int16_t     s1LastCode, s2LastCode, s3LastCode;
-RTC_DATA_ATTR Measurement buffer[BUFFER_MAX];  // 112 × 36 B = 4 032 B
+RTC_DATA_ATTR Measurement buffer[BUFFER_MAX];  // 112 × 40 B = 4 480 B
 ```
 
 ### NVS flash — co přežije výpadek napájení
@@ -741,16 +742,16 @@ Při kapacitě baterie 900 mAh a solárním panelu 5V/4W vydrží jednotka bez p
 **RTC RAM** (přežije deep sleep):
 ```
 Proměnné (metadata):     ~60 B
-Buffer (112 × 36 B):   4 032 B
+Buffer (112 × 40 B):   4 480 B
 ───────────────────────────────
-Celkem:                4 092 B
+Celkem:                4 540 B
 Limit ESP32-C3 RTC:    8 192 B
-Volné:                 4 100 B
+Volné:                 3 652 B
 ```
 
 **NVS flash** (přežije výpadek napájení):
 ```
-nvsLocalBuf (150 × 36 B):  5 400 B   ← statická globální proměnná, načtena lazy
+nvsLocalBuf (150 × 40 B):  6 000 B   ← statická globální proměnná, načtena lazy
 NVS klíče: "cnt" + "buf"              ← namespace "meteo" v Preferences
 Zápisy: ~1×/hodinu → výdrž 11+ let
 ```
@@ -769,6 +770,7 @@ Zápisy: ~1×/hodinu → výdrž 11+ let
 | `als` | `float` | 4 B | Světlo (-1 = nedostupný) |
 | `uvs` | `float` | 4 B | UV index (-1 = nedostupný) |
 | `batVoltage` | `float` | 4 B | V |
+| `pcbTemp` | `float` | 4 B | °C — interní teplota ESP32 (-100 = nedostupný) |
 
 ### Použité knihovny
 
