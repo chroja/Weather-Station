@@ -1,0 +1,394 @@
+/* LaskaKit DIY Mini Weather Station
+ * SHT40 + BME280 + LTR390 edition
+ *
+ * Senzory:
+ *  - SHT40   (0x44) — teplota, relativní vlhkost
+ *  - BME280  (0x77) — atmosferický tlak
+ *  - LTR390  (0x53) — UV index, intenzita světla
+ *
+ * Funkce:
+ *  - Deep sleep, cílová perioda SLEEP_SEC (kompenzovaná dobou běhu)
+ *  - Offline buffer v RTC RAM (BUFFER_MAX měření, přežije deep sleep)
+ *  - WiFi pokus při každém runu, timeout WIFI_TIMEOUT_SEC
+ *  - Decimace bufferu při přeplnění — zachová každý BUFFER_DECIMATE-tý záznam
+ *  - Timestampy: NTP sync → RTC RAM, odvozen z boot counteru
+ *  - Hromadné odeslání bufferu na TMEP.cz s parametrem t=<unix UTC>
+ *
+ * Board:   ESP32-C3 Dev Module
+ * Konfigurace: config.h
+ *
+ * Požadované knihovny:
+ *  - Adafruit SHT4x Library
+ *  - Adafruit BME280 Library
+ *  - Adafruit LTR390 Library
+ *  - WiFiManager (tzapu)
+ */
+
+#include "config.h"
+#include <Wire.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiManager.h>
+#include "Adafruit_SHT4x.h"
+#include <Adafruit_BME280.h>
+#include "Adafruit_LTR390.h"
+#include <time.h>
+
+// ── Pinout ────────────────────────────────────────────────────────────────────
+#define PIN_SDA      19
+#define PIN_SCL      18
+#define PIN_I2C_PWR   3   // EN pin pro uSUP konektor (napájení I2C sběrnice)
+#define PIN_ADC       0   // ADC měření napětí baterie (dělič 1M + 1.3M → max ~5.2 V při 3.3 V ADC reference)
+
+// ── Hardwarové konstanty ──────────────────────────────────────────────────────
+#define BME280_ADDR  0x77
+#define ADC_TO_BATV  1.5348f   // koeficient ADC → napětí baterie (děliče 1M + 1.3M) 
+
+// ── Datová struktura jednoho měření ──────────────────────────────────────────
+struct Measurement {
+    uint32_t timestamp;    // Unix čas v UTC (0 = neznámý) 
+    float    temperature;  // °C        (-100 = senzor nedostupný) 
+    float    relHumidity;  // % RH      (-1   = senzor nedostupný)
+    float    pressure;     // hPa       (-1   = senzor nedostupný)
+    float    absHumidity;  // g/m³      (-1   = senzor nedostupný) 
+    float    als;          // ALS count (-1   = senzor nedostupný)
+    float    uvs;          // UVS count (-1   = senzor nedostupný)
+    float    batVoltage;   // V
+};
+
+// ── RTC RAM — přežije deep sleep, vymaže se při výpadku napájení ─────────────
+RTC_DATA_ATTR uint8_t     bufferCount = 0;
+RTC_DATA_ATTR uint32_t    bootCount   = 0;
+RTC_DATA_ATTR uint32_t    lastNTPTime = 0;  // Unix čas při posledním NTP syncu
+RTC_DATA_ATTR uint32_t    lastNTPBoot = 0;  // bootCount při posledním NTP syncu
+RTC_DATA_ATTR Measurement buffer[BUFFER_MAX];
+
+// ── Objekty senzorů ───────────────────────────────────────────────────────────
+Adafruit_SHT4X  sht4;
+Adafruit_BME280 bme;
+Adafruit_LTR390 ltr;
+
+// =============================================================================
+// Timestamp (NTP + boot counter, bez externího RTC)
+// =============================================================================
+
+// Odhadne aktuální čas z posledního NTP syncu + počtu probuzení od té doby.
+// Přesnost: drift zlomku sekundy na cyklus, pro meteorologii dostačující.
+uint32_t getCurrentTimestamp() {
+    if (lastNTPTime == 0) return 0;  // nikdy jsme se nepřipojili
+    return lastNTPTime + (bootCount - lastNTPBoot) * SLEEP_SEC;
+}
+
+// Vrátí čitelný řetězec UTC času, nebo "?" pokud čas není znám.
+String formatTimestamp(uint32_t ts) {
+    if (ts == 0) return "?";
+    struct tm t;
+    time_t tt = (time_t)ts;
+    gmtime_r(&tt, &t);
+    char buf[24];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &t);
+    return String(buf);
+}
+
+// =============================================================================
+// Baterie
+// =============================================================================
+
+float readBatVoltage() {
+    // analogReadMilliVolts používá tovární kalibraci ADC — přesnější než raw
+    uint32_t mv = analogReadMilliVolts(PIN_ADC);
+    float v = (float)mv * ADC_TO_BATV / 1000.0f;
+    Serial.printf("  Baterie: %u mV (ADC) → %.3f V\n", mv, v);
+    return v;
+}
+
+// =============================================================================
+// Senzory
+// =============================================================================
+
+void readSHT40(Measurement& m) {
+    sht4.setPrecision(SHT4X_HIGH_PRECISION);
+    sensors_event_t humidity, temp;
+    sht4.getEvent(&humidity, &temp);
+
+    m.temperature = temp.temperature;
+    m.relHumidity = humidity.relative_humidity;
+
+    // Absolutní vlhkost — Arden-Buckova rovnice
+    // R_w = R / M_w = 8314 / 18.015 = 461.5 J/(kg·K)
+    float es = 6.112f * expf((17.67f * m.temperature) / (m.temperature + 243.5f));
+    float e  = (m.relHumidity / 100.0f) * es;
+    m.absHumidity = (e * 1000.0f) / (461.5f * (m.temperature + 273.15f)) * 100.0f;
+
+    Serial.printf("  SHT40:  T=%.2f°C  RH=%.2f%%  AH=%.4f g/m³\n",
+                  m.temperature, m.relHumidity, m.absHumidity);
+}
+
+void readBME280(Measurement& m) {
+    bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                    Adafruit_BME280::SAMPLING_X1,   // teplota (jen pro interní kompenzaci tlaku)
+                    Adafruit_BME280::SAMPLING_X4,   // tlak
+                    Adafruit_BME280::SAMPLING_NONE, // vlhkost — nepotřebujeme, máme SHT40
+                    Adafruit_BME280::FILTER_X4);
+    delay(10);
+    m.pressure = bme.readPressure() / 100.0f;
+    Serial.printf("  BME280: P=%.2f hPa\n", m.pressure);
+}
+
+void readLTR390(Measurement& m) {
+    ltr.setGain(LTR390_GAIN_6);
+    ltr.setResolution(LTR390_RESOLUTION_18BIT);
+
+    Serial.print("  LTR390: UVS měření...");
+    ltr.setMode(LTR390_MODE_UVS);
+    delay(500);
+    if (ltr.newDataAvailable()) {
+        m.uvs = ltr.readUVS();
+        Serial.printf(" %.2f\n", m.uvs);
+    } else {
+        Serial.println(" žádná data");
+    }
+
+    Serial.print("  LTR390: ALS měření...");
+    ltr.setMode(LTR390_MODE_ALS);
+    delay(500);
+    if (ltr.newDataAvailable()) {
+        m.als = ltr.readALS();
+        Serial.printf(" %.2f\n", m.als);
+    } else {
+        Serial.println(" žádná data");
+    }
+}
+
+// =============================================================================
+// WiFi
+// =============================================================================
+
+bool connectWiFi() {
+    WiFi.mode(WIFI_STA);
+
+    // Bez uložených credentials → konfigurační portál (první spuštění)
+    if (WiFi.SSID().isEmpty()) {
+        Serial.println("  Žádné uložené WiFi — spouštím konfigurační portál");
+        Serial.println("  AP: LaskaKitMeteo  heslo: meteostation");
+        WiFiManager wm;
+        wm.setConfigPortalTimeout(180);
+        return wm.autoConnect("LaskaKitMeteo", "meteostation");
+    }
+
+    // Rychlé připojení se credentials uloženými WiFiManagerem
+    Serial.printf("  Připojuji k '%s'", WiFi.SSID().c_str());
+    WiFi.begin();
+    for (int i = 0; i < WIFI_TIMEOUT_SEC * 10; i++) {
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println(" OK");
+            return true;
+        }
+        if (i % 10 == 0) Serial.print(".");
+        delay(100);
+    }
+    Serial.println(" TIMEOUT");
+    return false;
+}
+
+// =============================================================================
+// NTP sync → RTC RAM
+// =============================================================================
+
+void syncNTP() {
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // UTC
+
+    Serial.print("  NTP sync");
+    time_t now = 0;
+    for (int i = 0; i < 30 && now < 1000000000UL; i++) {
+        if (i % 5 == 0) Serial.print(".");
+        delay(200);
+        time(&now);
+    }
+
+    if (now > 1000000000UL) {
+        lastNTPTime = (uint32_t)now;
+        lastNTPBoot = bootCount;
+
+        // Opravit timestamp aktuálního měření pokud byl 0 (první NTP sync)
+        if (buffer[bufferCount - 1].timestamp == 0) {
+            buffer[bufferCount - 1].timestamp = lastNTPTime;
+        }
+
+        Serial.printf(" OK: %s UTC\n", formatTimestamp(lastNTPTime).c_str());
+    } else {
+        Serial.println(" SELHALO");
+    }
+}
+
+// =============================================================================
+// Odeslání dat na TMEP.cz
+// =============================================================================
+
+void httpGet(const String& url) {
+    // Zobrazit zkrácenou URL (bez serveru, jen parametry)
+    int paramStart = url.indexOf('?');
+    String params = (paramStart >= 0) ? url.substring(paramStart + 1) : url;
+    if (params.length() > 80) params = params.substring(0, 77) + "...";
+    Serial.printf("    ← %s\n", params.c_str());
+
+    HTTPClient http;
+    unsigned long t = millis();
+    http.begin(url);
+    int code = http.GET();
+    http.end();
+
+    Serial.printf("    → HTTP %d  (%lu ms)\n", code, millis() - t);
+}
+
+void sendMeasurement(const Measurement& m) {
+    String ts  = "&t="    + String(m.timestamp);
+    String bat = "&v="    + String(m.batVoltage, 3);
+    String sig = "&rssi=" + String(WiFi.RSSI());
+
+    // Server 1: teplota, relativní vlhkost, tlak
+    Serial.println("  [S1] teplota / vlhkost / tlak");
+    httpGet(String(serverName1)
+        + "temp="    + String(m.temperature, 2)
+        + "&humV="   + String(m.relHumidity, 2)
+        + "&pressV=" + String(m.pressure, 2)
+        + bat + sig + ts);
+
+    // Server 2: světlo, UV, absolutní vlhkost
+    Serial.println("  [S2] světlo / UV / abs. vlhkost");
+    httpGet(String(serverName2)
+        + "als="    + String(m.als, 2)
+        + "&uvs="   + String(m.uvs, 2)
+        + "&absHum="+ String(m.absHumidity, 4)
+        + bat + sig + ts);
+
+    // Server 3: baterie
+    Serial.println("  [S3] baterie");
+    httpGet(String(serverName3)
+        + "batV=" + String(m.batVoltage, 3)
+        + bat + sig + ts);
+}
+
+void sendAllBuffered() {
+    Serial.printf("Odesílám %u měření z bufferu\n", bufferCount);
+    for (uint8_t i = 0; i < bufferCount; i++) {
+        const Measurement& m = buffer[i];
+        Serial.printf("─── [%u/%u]  %s UTC ───\n",
+                      i + 1, bufferCount, formatTimestamp(m.timestamp).c_str());
+        Serial.printf("  T=%.2f°C  RH=%.2f%%  P=%.2f hPa  BAT=%.3fV\n",
+                      m.temperature, m.relHumidity, m.pressure, m.batVoltage);
+        sendMeasurement(m);
+    }
+    bufferCount = 0;
+    Serial.println("Buffer odeslaný a vymazaný");
+}
+
+// =============================================================================
+// Hlavní program
+// =============================================================================
+
+void setup() {
+    unsigned long startMs = millis();  // pro přesnou kompenzaci doby běhu
+
+    WiFi.mode(WIFI_OFF);
+    pinMode(PIN_ADC, INPUT);
+    Serial.begin(115200);
+
+    // Zapnout napájení I2C sběrnice (uSUP stabilizátor)
+    pinMode(PIN_I2C_PWR, OUTPUT);
+    digitalWrite(PIN_I2C_PWR, HIGH);
+    delay(10);
+    Wire.begin(PIN_SDA, PIN_SCL);
+
+    bootCount++;
+
+    // ── Záhlaví ──────────────────────────────────────────────────────────────
+    Serial.println("\n╔══════════════════════════════════════╗");
+#ifdef TEST_MODE
+    Serial.println("║   LaskaKit Meteo  [TESTOVACÍ PROVOZ] ║");
+#else
+    Serial.println("║        LaskaKit Meteo Mini           ║");
+#endif
+    Serial.printf( "║  Boot #%-5lu  Buffer: %3u / %-3u       ║\n",
+                   (unsigned long)bootCount, bufferCount, (uint8_t)BUFFER_MAX);
+    if (lastNTPTime > 0) {
+        Serial.printf("║  Čas: %-30s ║\n", formatTimestamp(getCurrentTimestamp()).c_str());
+    } else {
+        Serial.println("║  Čas: nesynchronizováno              ║");
+    }
+    Serial.println("╚══════════════════════════════════════╝");
+
+    // ── Inicializace senzorů ──────────────────────────────────────────────────
+    Serial.println("\n[Senzory]");
+    bool shtOK = sht4.begin();
+    bool bmeOK = bme.begin(BME280_ADDR);
+    bool ltrOK = ltr.begin();
+
+    Serial.printf("  SHT40:  %s\n", shtOK ? "OK" : "NENALEZEN");
+    Serial.printf("  BME280: %s\n", bmeOK ? "OK" : "NENALEZEN");
+    Serial.printf("  LTR390: %s\n", ltrOK ? "OK" : "NENALEZEN");
+
+    // ── Měření ───────────────────────────────────────────────────────────────
+    Serial.println("\n[Měření]");
+    Measurement m = {};
+    m.temperature = -100;
+    m.relHumidity = m.pressure = m.absHumidity = m.als = m.uvs = -1;
+
+    m.batVoltage = readBatVoltage();
+    m.timestamp  = getCurrentTimestamp();
+
+    if (shtOK) readSHT40(m);
+    if (bmeOK) readBME280(m);
+    if (ltrOK) readLTR390(m);
+
+    // ── Buffer ────────────────────────────────────────────────────────────────
+    Serial.println("\n[Buffer]");
+    if (bufferCount >= BUFFER_MAX) {
+        // Buffer plný — decimovat: zachovat každý BUFFER_DECIMATE-tý záznam.
+        // Starší data se proředí, novější zůstanou hustá.
+        // Po 10 cyklech pokrývá buffer ~1000 minut při průměrném rozestupu 10 min.
+        Serial.printf("  Plný — decimuji (každý %u. záznam):\n", (uint8_t)BUFFER_DECIMATE);
+        Serial.printf("  Rozsah: %s → %s UTC\n",
+                      formatTimestamp(buffer[0].timestamp).c_str(),
+                      formatTimestamp(buffer[bufferCount - 1].timestamp).c_str());
+        uint8_t newCount = 0;
+        for (uint8_t i = 0; i < bufferCount; i += BUFFER_DECIMATE) {
+            buffer[newCount++] = buffer[i];
+        }
+        bufferCount = newCount;
+        Serial.printf("  Po decimaci: %u záznamů\n", bufferCount);
+    }
+    buffer[bufferCount++] = m;
+    Serial.printf("  Uloženo → buffer: %u/%u\n", bufferCount, (uint8_t)BUFFER_MAX);
+
+    // ── WiFi ──────────────────────────────────────────────────────────────────
+    Serial.println("\n[WiFi]");
+    if (connectWiFi()) {
+        Serial.printf("  Připojeno: %s  RSSI: %d dBm  IP: %s\n",
+                      WiFi.SSID().c_str(), WiFi.RSSI(),
+                      WiFi.localIP().toString().c_str());
+        Serial.println("\n[NTP]");
+        syncNTP();
+        Serial.println("\n[Odesílání]");
+        sendAllBuffered();
+        WiFi.disconnect(true);
+    } else {
+        Serial.printf("  Nedostupná — data v bufferu (%u/%u)\n",
+                      bufferCount, (uint8_t)BUFFER_MAX);
+    }
+
+    // ── Spánek ────────────────────────────────────────────────────────────────
+    digitalWrite(PIN_I2C_PWR, LOW);
+    unsigned long elapsedMs = millis() - startMs;
+    uint64_t sleepUs = (SLEEP_SEC * 1000UL > elapsedMs)
+                       ? ((uint64_t)(SLEEP_SEC * 1000UL - elapsedMs)) * 1000ULL
+                       : 1000000ULL;  // minimálně 1 s pokud run přesáhl SLEEP_SEC
+    Serial.printf("\n[Spánek]  Běh: %lu ms → spánek: %llu ms\n\n",
+                  elapsedMs, sleepUs / 1000ULL);
+    esp_sleep_enable_timer_wakeup(sleepUs);
+    esp_deep_sleep_start();
+}
+
+void loop() {
+    // Nepoužíváme — vše se odehrává v setup() před deep sleep
+}
