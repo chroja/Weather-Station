@@ -25,6 +25,10 @@
 #define HTTP_STALE  (-2)
 
 #include "config.h"
+#include "pinout.h"
+#ifdef HAS_NEOPIXEL
+#include <Adafruit_NeoPixel.h>
+#endif
 #include <Wire.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -35,12 +39,6 @@
 #include <Adafruit_BME280.h>
 #include "Adafruit_LTR390.h"
 #include <time.h>
-
-// ── Pinout ────────────────────────────────────────────────────────────────────
-#define PIN_SDA      19
-#define PIN_SCL      18
-#define PIN_I2C_PWR   4   // EN uSUP (pro v4.1 = IO4, pro v3.5 = IO3)
-#define PIN_ADC       0
 
 // ── Hardwarové konstanty ──────────────────────────────────────────────────────
 #define BME280_ADDR  0x77
@@ -744,10 +742,9 @@ void testAdjSent() {
 #endif
 
 // =============================================================================
-// Jednorázové vymazání bufferů (CLEAR_BUFFERS)
+// Vymazání bufferů — voláno z CLEAR_BUFFERS i z checkBootButton()
 // =============================================================================
 
-#ifdef CLEAR_BUFFERS
 void clearAllBuffers() {
     bufferCount = 0;
     s1Sent = s2Sent = s3Sent = 0;
@@ -756,9 +753,133 @@ void clearAllBuffers() {
     nvsLoaded = true; nvsCount = 0;
     nvsFlush();       // zapíše cnt=0 do NVS
     nvsLoaded = false;
-    Serial.println("[CLEAR_BUFFERS] RTC buffer + NVS smazány. Zakomentuj CLEAR_BUFFERS a nahraj znovu.");
+    Serial.println("[clearAllBuffers] RTC buffer + NVS smazány.");
 }
-#endif
+
+// =============================================================================
+// Boot tlačítko + NeoPixel (pouze HAS_BUTTON + HAS_NEOPIXEL)
+// =============================================================================
+
+#if defined(HAS_BUTTON) && defined(HAS_NEOPIXEL)
+
+static Adafruit_NeoPixel btnLed(1, PIN_LED, NEO_GRBW + NEO_KHZ800);
+
+// R,G,B,W pro každou zónu (SK6812 RGBW)
+static const uint8_t ZONE_COLORS[6][4] = {
+    { 0, 50,  0,  0},  // 0: zelená  — normální boot   (0–ZONE1)
+    { 0,  0, 50,  0},  // 1: modrá   — reset WiFi      (ZONE1–ZONE2)
+    { 0, 30, 30,  0},  // 2: cyan    — smaž buffery    (ZONE2–ZONE3)
+    { 0,  0,  0, 50},  // 3: bílá    — factory bez WiFi (ZONE3–ZONE4)
+    {50,  0,  0,  0},  // 4: červená — factory úplný   (ZONE4–ZONE5)
+    { 0, 50,  0,  0},  // 5: zelená  — přestřeleno     (ZONE5+)
+};
+
+static void btnLedSet(uint8_t zone) {
+    btnLed.setPixelColor(0, btnLed.Color(
+        ZONE_COLORS[zone][0], ZONE_COLORS[zone][1],
+        ZONE_COLORS[zone][2], ZONE_COLORS[zone][3]));
+    btnLed.show();
+}
+
+static void btnLedOff() {
+    btnLed.setPixelColor(0, 0);
+    btnLed.show();
+}
+
+static uint8_t getButtonZone(unsigned long ms) {
+    if (ms < BTN_MS_ZONE1) return 0;
+    if (ms < BTN_MS_ZONE2) return 1;
+    if (ms < BTN_MS_ZONE3) return 2;
+    if (ms < BTN_MS_ZONE4) return 3;
+    if (ms < BTN_MS_ZONE5) return 4;
+    return 5;
+}
+
+void checkBootButton() {
+    // VSENSOR musí být zapnuto před čtením tlačítka — pull-up IO5 je na VSENSOR railu
+    pinMode(PIN_I2C_PWR, OUTPUT);
+    digitalWrite(PIN_I2C_PWR, HIGH);
+    delay(5);  // čas pro stabilizaci napájení
+
+    pinMode(PIN_BTN, INPUT);
+    if (digitalRead(PIN_BTN) == HIGH) return;  // tlačítko nestisknuto → přeskoč
+    // (VSENSOR zůstane zapnutý — setup() ho stejně potřebuje pro I2C senzory)
+
+    btnLed.begin();
+    btnLed.setBrightness(40);
+    btnLedSet(0);  // zelená — tlačítko detekováno
+
+    unsigned long pressStart = millis();
+    uint8_t zone = 0;
+
+    // Sleduj zónu dokud je tlačítko stisknuté
+    while (digitalRead(PIN_BTN) == LOW) {
+        uint8_t z = getButtonZone(millis() - pressStart);
+        if (z != zone) { zone = z; btnLedSet(zone); }
+        delay(10);
+    }
+
+    // Zóna 0 nebo 5 = žádná akce
+    if (zone == 0 || zone == 5) {
+        btnLedOff();
+        return;
+    }
+
+    // Potvrzovací fáze: BTN_CONFIRM_MS blikání, stisk = zrušení
+    bool cancelled = false;
+    bool blinkOn = true;
+    unsigned long lastBlink = millis();
+    unsigned long confirmStart = millis();
+
+    while (millis() - confirmStart < BTN_CONFIRM_MS) {
+        if (digitalRead(PIN_BTN) == LOW) { cancelled = true; break; }
+        if (millis() - lastBlink >= 250) {
+            blinkOn = !blinkOn;
+            blinkOn ? btnLedSet(zone) : btnLedOff();
+            lastBlink = millis();
+        }
+        delay(10);
+    }
+
+    btnLedOff();
+
+    if (cancelled) {
+        DLOGLN(1, "[Button] Akce zrušena.");
+        while (digitalRead(PIN_BTN) == LOW) delay(10);  // čekej na uvolnění
+        return;
+    }
+
+    // Proveď akci
+    switch (zone) {
+        case 1:
+            DLOGLN(1, "[Button] Reset WiFi přihlašovacích údajů.");
+            wifiConfigured = false;
+            { WiFiManager wm; wm.resetSettings(); }
+            break;
+        case 2:
+            DLOGLN(1, "[Button] Smazání RTC + NVS bufferů.");
+            clearAllBuffers();
+            break;
+        case 3:
+            DLOGLN(1, "[Button] Factory reset bez WiFi (buffery + bootCount).");
+            clearAllBuffers();
+            bootCount = 0; lastNTPTime = 0; lastNTPBoot = 0;
+            break;
+        case 4:
+            DLOGLN(1, "[Button] Factory reset úplný (buffery + bootCount + WiFi).");
+            clearAllBuffers();
+            bootCount = 0; lastNTPTime = 0; lastNTPBoot = 0;
+            wifiConfigured = false;
+            { WiFiManager wm; wm.resetSettings(); }
+            break;
+    }
+
+    Serial.flush();
+    delay(200);
+    esp_restart();
+}
+
+#endif  // HAS_BUTTON && HAS_NEOPIXEL
 
 // =============================================================================
 // Hlavní program
@@ -772,6 +893,10 @@ void setup() {
     Serial.begin(115200);
     delay(100);  // čas pro USB CDC enumeraci
     debugLevel = Serial ? DEBUG_LEVEL : 0;
+
+#if defined(HAS_BUTTON) && defined(HAS_NEOPIXEL)
+    checkBootButton();
+#endif
 
 #ifdef CLEAR_BUFFERS
     clearAllBuffers();

@@ -12,7 +12,8 @@ Firmware pro **LaskaKit DIY Mini Weather Station** (ESP32-C3).
 Weather-Station/
 ├── FW_experimental/
 │   ├── FW_experimental.ino   ← aktivní firmware (upravovat zde)
-│   ├── config.h              ← konstanty: SLEEP_SEC, BUFFER_MAX, DEBUG_LEVEL, ...
+│   ├── config.h              ← konstanty: BOARD_VERSION, SLEEP_SEC, BUFFER_MAX, DEBUG_LEVEL, ...
+│   ├── pinout.h              ← piny dle BOARD_VERSION (generován z config.h)
 │   ├── secrets.h             ← privátní URL serverů (gitignore, uživatel spravuje)
 │   ├── secrets.h.example     ← šablona pro secrets.h (committed)
 │   └── README.md             ← popis experimentální verze
@@ -39,11 +40,19 @@ Weather-Station/
 
 **DS3231 momentálně neosazeno** — timestampy se odhadují z NTP syncu + boot counteru.
 
-**Piny:**
-- SDA = GPIO 19, SCL = GPIO 18
-- I2C napájení = GPIO 4 (PIN_I2C_PWR / uSUP EN; v3.5 = GPIO 3)
-- ADC baterie = GPIO 0
-- ADC koeficient: `ADC_TO_BATV = 1.7857` (kalibrováno: 2240 mV → 4.0 V)
+**Piny (viz `pinout.h`, řídí se `BOARD_VERSION` z `config.h`):**
+
+| Pin | v3.5 / v3.6 | v4.1+ |
+|---|---|---|
+| SDA | GPIO 19 | GPIO 19 |
+| SCL | GPIO 18 | GPIO 18 |
+| PIN_I2C_PWR (uSUP EN) | GPIO 3 | GPIO 4 |
+| ADC baterie | GPIO 0 | GPIO 0 |
+| PIN_BTN (tlačítko) | — | GPIO 5 |
+| PIN_LED (SK6812) | — (IO9=FLASH) | GPIO 9 |
+| PIN_1WIRE (DS18B20) | GPIO 10 | GPIO 10 |
+
+ADC koeficient: `ADC_TO_BATV = 1.7857` (kalibrováno: 2240 mV → 4.0 V)
 
 ---
 
@@ -134,6 +143,12 @@ Přepínač `#define TEST_MODE` v `.ino` (před `#include "config.h"`) vybírá 
 - ✓ HTTP timeout (`HTTP_TIMEOUT_SEC=8` v config.h) — `http.setTimeout()` před POST, ochrana před zaseknutím při slabém signálu
 - ✓ `PCB_TEMP_OFFSET` v config.h — offset interního senzoru ESP32, přičte se k `temperatureRead()`
 - ✓ Validace naměřených hodnot — T mimo −60…85°C nebo RH > 105 % → uložit jako nedostupné (−100 / −1)
+- ✓ Boot tlačítko + NeoPixel (v4.1+) — `BOARD_VERSION` v config.h (35=v3.5/v3.6, 41=v4.1+);
+  při ≥ 41 automaticky `HAS_BUTTON`/`HAS_NEOPIXEL`; IO5 (aktivní LOW, pull-up na VSENSOR), SK6812 RGBW na IO9;
+  6 zón (zelená/modrá/cyan/bílá/červená/zelená, 0–2–4–6–8–10–∞ s);
+  akce: WiFi reset / smaž buffery / factory bez WiFi (buffery+bootCount+NTP) / factory úplný;
+  potvrzovací blikání 5 s; cancel = opětovný stisk; `esp_restart()` po akci;
+  `pinout.h` — piny dle verze; IO9 = boot strapping + LED data (bez konfliktu, VSENSOR OFF při bootu)
 
 ### Střednědobé (hardware)
 - DS3231 RTC — přidat až bude k dispozici modul

@@ -4,6 +4,30 @@
 // Zkopíruj secrets.h.example → secrets.h a vyplň své domény z tmep.cz.
 #include "secrets.h"
 
+// ── Hardware verze ────────────────────────────────────────────────────────────
+// Nastav číslo své desky (verze × 10, tedy v3.5 = 35, v4.1 = 41).
+// Desky v4.1+ mají tlačítko (IO5) a SK6812 RGBW LED (IO9) — firmware je aktivuje automaticky.
+#define BOARD_VERSION  41   // LaskaKit Meteo Mini: 35 = v3.5  |  41 = v4.1+
+
+#if BOARD_VERSION >= 41
+#define HAS_BUTTON    // tlačítko na IO5 (aktivní LOW, ext. pull-up 10 kΩ na 3V3, 1 µF debounce)
+#define HAS_NEOPIXEL  // SK6812 RGBW LED na IO9 (napájení přes VSENSOR / PIN_I2C_PWR)
+#endif
+
+// Časování zón tlačítka (ms od stisku; platné pouze s HAS_BUTTON + HAS_NEOPIXEL)
+//   0–ZONE1: zelená  — normální boot (žádná akce)
+//   ZONE1–ZONE2: modrá — reset WiFi přihlašovacích údajů
+//   ZONE2–ZONE3: cyan  — smaž RTC + NVS buffery
+//   ZONE3–ZONE4: bílá  — factory reset bez WiFi (buffery + bootCount reset)
+//   ZONE4–ZONE5: červená — factory reset úplný (buffery + bootCount + WiFi)
+//   ZONE5+: zelená — přestřelil jsi (žádná akce)
+#define BTN_MS_ZONE1  2000   // ms: začátek modré zóny (reset WiFi)
+#define BTN_MS_ZONE2  4000   // ms: začátek cyan zóny (smaž buffery)
+#define BTN_MS_ZONE3  6000   // ms: začátek bílé zóny (factory bez WiFi)
+#define BTN_MS_ZONE4  8000   // ms: začátek červené zóny (factory úplný)
+#define BTN_MS_ZONE5 10000   // ms: začátek zelené zóny (přestřeleno — bez akce)
+#define BTN_CONFIRM_MS 5000  // ms: délka potvrzovacího blikání před provedením akce
+
 // ── Konfigurace chování ───────────────────────────────────────────────────────
 #define SLEEP_SEC        60   // cílová perioda měření v sekundách (včetně doby běhu)
 #define SLEEP_MIN_SEC    30   // minimální spánek při překročení SLEEP_SEC (sekundy)

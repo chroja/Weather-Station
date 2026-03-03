@@ -55,7 +55,9 @@
 - [ ] **DS3231 RTC** — přidat až bude k dispozici modul
   - přesnější timestampy (bez driftu boot counteru)
   - čas zachován i po výpadku napájení (CR2032 baterie)
-- [ ] **Button na IO5** — dlouhý stisk = reset WiFi credentials (`wifiConfigured = false`)
+- [x] **Button + NeoPixel (v4.1+)** — boot tlačítko IO5 s SK6812 RGBW LED na IO9; zóny 0–8s určují
+  akci (normální boot / reset WiFi / smaž buffery / tovární reset); potvrzovací blikání 3s s možností
+  zrušení opětovným stiskem; aktivováno přes `HAS_BUTTON`/`HAS_NEOPIXEL` v `config.h` (výchozí: zakomentováno)
 - [ ] **DS18B20** — pin připraven na desce, až bude modul po ruce
 
 ---

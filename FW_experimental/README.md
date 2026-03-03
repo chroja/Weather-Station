@@ -28,9 +28,10 @@ hodinové záznamy z NVS, pak aktuální data z RTC.
 11. [Per-server odesílání](#11-per-server-odesílání)
 12. [Debug výstup](#12-debug-výstup)
 13. [Architektura firmwaru](#13-architektura-firmwaru)
-14. [Řešení problémů](#14-řešení-problémů)
-15. [Hardware a zapojení](#15-hardware-a-zapojení)
-16. [Referenční tabulky](#16-referenční-tabulky)
+14. [Boot tlačítko (pouze v4.1+)](#14-boot-tlačítko-pouze-v41)
+15. [Řešení problémů](#15-řešení-problémů)
+16. [Hardware a zapojení](#16-hardware-a-zapojení)
+17. [Referenční tabulky](#17-referenční-tabulky)
 
 ---
 
@@ -90,6 +91,7 @@ Otevři **Tools → Manage Libraries** a nainstaluj:
 | Adafruit BME280 Library | Adafruit | ≥ 2.2 |
 | Adafruit LTR390 Library | Adafruit | ≥ 1.0 |
 | Adafruit Unified Sensor | Adafruit | ≥ 1.1 |
+| Adafruit NeoPixel | Adafruit | ≥ 1.10 | pouze pro v4.1+ (`BOARD_VERSION >= 41`) |
 | WiFiManager | tzapu | ≥ 2.0 |
 
 ---
@@ -145,7 +147,7 @@ V nastavení každého senzoru nastav popisky kanálů:
 
 ### 4.1 Otevřít projekt
 
-Otevři `FW_experimental.ino` v Arduino IDE — automaticky se otevřou i `config.h` a `secrets.h`.
+Otevři `FW_experimental.ino` v Arduino IDE — automaticky se otevřou i `config.h`, `pinout.h` a `secrets.h`.
 
 ### 4.2 Vytvořit `secrets.h` s URL serverů
 
@@ -212,6 +214,9 @@ Na začátku souboru jsou přepínače:
 | `TIMEZONE` | `CET-1CEST,...` | dle umístění | POSIX TZ string |
 | `HTTP_STALE_RESPONSE` | `"older than last known value"` | beze změny | Řetězec hledaný v HTTP 400 odpovědi; shoda = přeskočit nejstarší záznam a okamžitě retryovat; `""` = vypnuto |
 | `PCB_TEMP_OFFSET` | `0.0` | dle kalibrace | Offset interního teplotního senzoru ESP32 v °C (přičte se k surové hodnotě); viz sekce 8 |
+| `BOARD_VERSION` | `35` | dle desky | Verze desky × 10 (`35` = v3.5/v3.6, `41` = v4.1+); při ≥ 41 se automaticky aktivují `HAS_BUTTON` a `HAS_NEOPIXEL` |
+| `BTN_MS_ZONE1..5` | 2000/4000/6000/8000/10000 | beze změny | Hranice zón tlačítka v ms (zelená/modrá/cyan/bílá/červená/zelená); jen při `BOARD_VERSION >= 41` |
+| `BTN_CONFIRM_MS` | `5000` | beze změny | Délka potvrzovacího blikání před provedením akce (ms); jen při `BOARD_VERSION >= 41` |
 
 > **SLEEP_SEC = 15** je jen pro testování — baterie by nevydržela. Pro venkovní provoz nastav **60** (1 měření/min).
 
@@ -557,6 +562,12 @@ wakeup
    ├─ WiFi OFF, ADC input, Serial init
    ├─ delay(100) → USB CDC enumerace
    ├─ debugLevel = Serial ? DEBUG_LEVEL : 0
+   ├─ [checkBootButton()]  ← jen při HAS_BUTTON + HAS_NEOPIXEL
+   │   ├─ VSENSOR ON, IO5 HIGH → přeskoč (VSENSOR zůstane pro senzory)
+   │   ├─ IO5 LOW → zobraz zónu barvou LED, čekej na uvolnění
+   │   │   zelená(0–2s) / modrá(2–4s) / cyan(4–6s) / bílá(6–8s) / červená(8–10s) / zelená(10s+)
+   │   ├─ zóna 0 nebo 5 (zelená) → bez akce
+   │   └─ zóna 1–4 → potvrzovací blikání 5s; stisk = zrušení, timeout = akce + restart
    ├─ I2C power ON, Wire.begin
    ├─ Detekce výpadku napájení (rtcMagic)
    │   └─ výpadek: reset RTC proměnných, načti nvsCount z NVS
@@ -655,7 +666,48 @@ Každý řádek = jedno měření. Batch = všechny záznamy od posledního úsp
 
 ---
 
-## 14. Řešení problémů
+## 14. Boot tlačítko (pouze v4.1+)
+
+Pokud máš desku **LaskaKit Meteo Mini v4.1+**, nastav `BOARD_VERSION 41` v `config.h` —
+firmware automaticky aktivuje tlačítko (IO5) a LED (IO9). Při bootu stiskni tlačítko a vyber akci podle délky stisku.
+
+### Zóny
+
+| Délka stisku | Barva LED | Akce po uvolnění |
+|---|---|---|
+| 0–2 s | zelená | normální boot — žádná akce |
+| 2–4 s | modrá | reset WiFi přihlašovacích údajů (spustí konfigurační portál) |
+| 4–6 s | cyan | smazání RTC + NVS bufferů |
+| 6–8 s | bílá | factory reset bez WiFi — buffery + reset bootCount + NTP |
+| 8–10 s | červená | factory reset úplný — buffery + bootCount + NTP + WiFi přihlašovací údaje |
+| 10+ s | zelená | přestřelil jsi — žádná akce |
+
+> Barvy jsou voleny pro dobrou rozlišitelnost na SMD LED. Žlutá a oranžová jsou na SK6812 špatně rozlišitelné, proto se nepoužívají.
+
+### Potvrzovací fáze
+
+Po uvolnění v akční zóně LED **3 sekundy bliká** (250 ms střídání). Tato fáze slouží jako pojistka:
+
+- **Nestiskneš nic** → po 5 sekundách se akce provede a ESP restartuje.
+- **Stiskneš tlačítko** (kdykoli během blikání) → akce se **zruší**, boot pokračuje normálně.
+
+### Použití
+
+```
+1. Připoj USB kabel (volitelné, pro sledování na Serial Monitoru)
+2. Stiskni RESET nebo odpoj a připoj napájení
+3. Podržuj tlačítko IO5 — LED změní barvu podle délky stisku
+4. V požadované zóně tlačítko uvolni
+5. Sleduj blikání (3 s) — chceš-li zrušit, stiskni znovu
+6. Po provedení akce se ESP automaticky restartuje
+```
+
+> Pro v4.1+ nastav `#define BOARD_VERSION 41` v `config.h` — `HAS_BUTTON` a `HAS_NEOPIXEL` se aktivují automaticky.
+> Na starších deskách nechej výchozí `BOARD_VERSION 35` (nebo odpovídající verzi).
+
+---
+
+## 15. Řešení problémů
 
 ### Senzor hlásí CHYBA
 
@@ -738,7 +790,7 @@ vyčistí sám bez zásahu uživatele.
 
 ---
 
-## 15. Hardware a zapojení
+## 16. Hardware a zapojení
 
 ### Komponenty
 
@@ -753,14 +805,21 @@ vyčistí sám bez zásahu uživatele.
 
 ### Piny
 
-| Signál | GPIO | Poznámka |
-|---|---|---|
-| SDA | 19 | I2C data |
-| SCL | 18 | I2C hodiny |
-| I2C napájení | 4 | uSUP EN (v4.1); pro v3.5 použij GPIO3 |
-| ADC baterie | 0 | Dělič napětí na desce |
+Piny jsou definovány v `pinout.h` a vybírány automaticky podle `BOARD_VERSION` v `config.h`.
 
-> **Pozor na verzi desky:** LaskaKit Meteo Mini v4.1 má `PIN_I2C_PWR = 4`, starší v3.5 má `PIN_I2C_PWR = 3`. Zkontroluj a uprav v `FW_experimental.ino` pokud potřeba.
+| Signál | `PIN_*` | v3.5 / v3.6 | v4.1+ | Poznámka |
+|---|---|---|---|---|
+| I2C data | `PIN_SDA` | GPIO 19 | GPIO 19 | |
+| I2C hodiny | `PIN_SCL` | GPIO 18 | GPIO 18 | |
+| uSUP EN / VSENSOR | `PIN_I2C_PWR` | **GPIO 3** | **GPIO 4** | napájení senzorů a LED |
+| ADC baterie | `PIN_ADC` | GPIO 0 | GPIO 0 | dělič napětí na desce |
+| Tlačítko | `PIN_BTN` | — | GPIO 5 | aktivní LOW, pull-up 10 kΩ na VSENSOR, 1 µF |
+| LED SK6812 | `PIN_LED` | — (IO9=FLASH) | GPIO 9 | RGBW NeoPixel, napájení přes PIN_I2C_PWR |
+| 1-Wire DS18B20 | `PIN_1WIRE` | GPIO 10 | GPIO 10 | pin na desce, zatím neosazeno |
+
+> Pro správný výběr pinů stačí nastavit `BOARD_VERSION` v `config.h`:
+> - `35` = v3.5 nebo v3.6 (IO3 pro VSENSOR, IO9 jako FLASH pin)
+> - `41` = v4.1+ (IO4 pro VSENSOR, IO5 = tlačítko, IO9 = LED)
 
 ### Spotřeba
 
@@ -775,7 +834,7 @@ Při kapacitě baterie 900 mAh a solárním panelu 5V/4W vydrží jednotka bez p
 
 ---
 
-## 16. Referenční tabulky
+## 17. Referenční tabulky
 
 ### Paměťová mapa
 
@@ -822,5 +881,6 @@ Zápisy: ~1×/hodinu → výdrž 11+ let
 | Adafruit BME280 | ≥ 2.2 | Library Manager |
 | Adafruit LTR390 | ≥ 1.0 | Library Manager |
 | Adafruit Unified Sensor | ≥ 1.1 | Library Manager (závislost) |
+| Adafruit NeoPixel | ≥ 1.10 | Library Manager (pouze pro v4.1+, `BOARD_VERSION >= 41`) |
 | WiFiManager (tzapu) | ≥ 2.0 | Library Manager |
 | Arduino ESP32 core | ≥ 2.0 | Boards Manager |
