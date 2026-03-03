@@ -64,7 +64,7 @@
 //      1 hod    │  150  │  150 hod (~6 dní)
 //
 // RAM při načtení: 150 × 40 B = 6 000 B (statická globální proměnná)
-// NVS flash zápisy: ~1×/hodinu → opotřebení ~8 760/rok → výdrž 11+ let
+// NVS flash zápisy: ~1×/hodinu → opotřebení zanedbatelné (wear-leveling, výdrž staletí)
 //
 #define FLASH_MAX       150   // max hodinových průměrů v NVS
 

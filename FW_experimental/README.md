@@ -107,9 +107,9 @@ Na [tmep.cz](https://tmep.cz) vytvoř tři nové senzory:
 
 | Senzor | Doporučený název | Kanály |
 |---|---|---|
-| S1 | Meteo — teplota/vlhkost/tlak | G1=teplota (°C), G2=rel. vlhkost (%), G3=tlak (hPa) |
-| S2 | Meteo — světlo/UV/abs.vlhkost | G1=světlo ALS, G2=UV index, G3=abs. vlhkost (g/m³) |
-| S3 | Meteo — diagnostika | G1=PCB teplota (°C), G2=výpadky napájení, G3=délka runu (s) |
+| S1 | Meteo — teplota/vlhkost/tlak | G1=teplota (°C), G2=rel. vlhkost (%), G3=tlak (hPa), voltage=baterie (V), rssi=WiFi (dBm) |
+| S2 | Meteo — světlo/UV/abs.vlhkost | G1=světlo ALS, G2=UV index, G3=abs. vlhkost (g/m³), voltage=baterie (V), rssi=WiFi (dBm) |
+| S3 | Meteo — diagnostika | G1=PCB teplota (°C), G2=výpadky napájení, G3=délka runu (s), voltage=baterie (V), rssi=WiFi (dBm) |
 
 ### 3.2 Zjistit URL senzorů
 
@@ -129,17 +129,21 @@ V nastavení každého senzoru nastav popisky kanálů:
 - Kanál 2 (G2): `Vlhkost` — jednotka `%`
 - Kanál 3 (G3): `Tlak` — jednotka `hPa`
 - Kanál 4 (voltage): `Baterie` — jednotka `V`
+- Kanál 5 (rssi): `WiFi RSSI` — jednotka `dBm`
 
 **S2:**
 - Kanál 1 (G1): `Světlo ALS`
 - Kanál 2 (G2): `UV index`
 - Kanál 3 (G3): `Abs. vlhkost` — jednotka `g/m³`
+- Kanál 4 (voltage): `Baterie` — jednotka `V`
+- Kanál 5 (rssi): `WiFi RSSI` — jednotka `dBm`
 
 **S3:**
 - Kanál 1 (G1): `PCB teplota` — jednotka `°C`  *(interní senzor ESP32, ±3–5°C odchylka)*
 - Kanál 2 (G2): `Výpadky napájení` — počet celkem od prvního spuštění (perzistentní v NVS)
 - Kanál 3 (G3): `Délka runu` — jednotka `s`  *(délka předchozího cyklu, 0 při prvním bootu)*
 - Kanál 4 (voltage): `Baterie` — jednotka `V`
+- Kanál 5 (rssi): `WiFi RSSI` — jednotka `dBm`
 
 ---
 
@@ -164,15 +168,15 @@ Pak otevři `secrets.h` a vyplň:
 ```cpp
 #ifdef TEST_MODE
 
-const char serverName1[] = "https://xxxxxx-yyyyyy.tmep.cz";  // test: teplota, vlhkost, tlak
-const char serverName2[] = "https://xxxxxx-yyyyyy.tmep.cz";  // test: světlo, UV, abs. vlhkost
-const char serverName3[] = "https://xxxxxx-yyyyyy.tmep.cz";  // test: baterie
+const char serverName1[] = "https://xxxxxx-yyyyyy.tmep.cz";  // test: počasí (T, RH, P)
+const char serverName2[] = "https://xxxxxx-yyyyyy.tmep.cz";  // test: světlo (ALS, UV, absH)
+const char serverName3[] = "https://xxxxxx-yyyyyy.tmep.cz";  // test: diagnostika (pcbT, ploss, dur)
 
 #else
 
-const char serverName1[] = "https://xxxxxx-yyyyyy.tmep.cz";  // teplota, vlhkost, tlak
-const char serverName2[] = "https://xxxxxx-yyyyyy.tmep.cz";  // světlo, UV, abs. vlhkost
-const char serverName3[] = "https://xxxxxx-yyyyyy.tmep.cz";  // baterie
+const char serverName1[] = "https://xxxxxx-yyyyyy.tmep.cz";  // počasí (T, RH, P)
+const char serverName2[] = "https://xxxxxx-yyyyyy.tmep.cz";  // světlo (ALS, UV, absH)
+const char serverName3[] = "https://xxxxxx-yyyyyy.tmep.cz";  // diagnostika (pcbT, ploss, dur)
 
 #endif
 ```
@@ -214,7 +218,7 @@ Na začátku souboru jsou přepínače:
 | `TIMEZONE` | `CET-1CEST,...` | dle umístění | POSIX TZ string |
 | `HTTP_STALE_RESPONSE` | `"older than last known value"` | beze změny | Řetězec hledaný v HTTP 400 odpovědi; shoda = přeskočit nejstarší záznam a okamžitě retryovat; `""` = vypnuto |
 | `PCB_TEMP_OFFSET` | `0.0` | dle kalibrace | Offset interního teplotního senzoru ESP32 v °C (přičte se k surové hodnotě); viz sekce 8 |
-| `BOARD_VERSION` | `35` | dle desky | Verze desky × 10 (`35` = v3.5/v3.6, `41` = v4.1+); při ≥ 41 se automaticky aktivují `HAS_BUTTON` a `HAS_NEOPIXEL` |
+| `BOARD_VERSION` | `41` | dle desky | Verze desky × 10 (`35` = v3.5/v3.6, `41` = v4.1+); při ≥ 41 se automaticky aktivují `HAS_BUTTON` a `HAS_NEOPIXEL` |
 | `BTN_MS_ZONE1..5` | 2000/4000/6000/8000/10000 | beze změny | Hranice zón tlačítka v ms (zelená/modrá/cyan/bílá/červená/zelená); jen při `BOARD_VERSION >= 41` |
 | `BTN_CONFIRM_MS` | `5000` | beze změny | Délka potvrzovacího blikání před provedením akce (ms); jen při `BOARD_VERSION >= 41` |
 
@@ -367,12 +371,23 @@ Až firmware funguje správně s testovacími URL, přejdi na produkci:
 
 ```cpp
 #define SLEEP_SEC   60   // 1 měření za minutu místo 15s
-#define DEBUG_LEVEL  1   // jen chyby + souhrn (šetří výpočetní čas)
 ```
+
+> `DEBUG_LEVEL` není nutné měnit — při odpojení USB se automaticky přepne na `0` (viz sekce 12).
 
 ### 9.3 Reset WiFi konfigurace (volitelné)
 
 Pokud chceš smazat uloženou WiFi síť (např. při přesunu na jiné místo):
+
+**Na v4.1+ použij boot tlačítko** (bez nutnosti přenahrávat firmware):
+1. Restartuj desku a drž tlačítko IO5
+2. Podrž do **modré zóny** (2–4 s)
+3. Uvolni → potvrď blikáním (nebo zruš opětovným stiskem)
+4. Deska se restartuje a spustí konfigurační portál `LaskaKitMeteo`
+
+Viz [sekce 14 — Boot tlačítko](#14-boot-tlačítko-pouze-v41).
+
+**Na v3.5/v3.6** (bez tlačítka) je nutné přenahrát firmware s dočasnou změnou:
 - Přidej do `setup()` před `connectWiFi()` řádek:
   ```cpp
   WiFiManager wm; wm.resetSettings();
@@ -452,7 +467,7 @@ Buffer/NVS se uvolní až po HTTP 200 od **všech tří serverů**.
 ```
 RTC RAM:  112 slotů × 40 B = 4 480 B  (limit: 8 192 B)
 NVS flash: 150 slotů × 40 B = 6 000 B  (limit Preferences namespace: 508 KB)
-NVS zápisy: ~1×/hodinu = ~8 760/rok → opotřebení zanedbatelné (výdrž 11+ let)
+NVS zápisy: ~1×/hodinu = ~8 760/rok → opotřebení zanedbatelné (wear-leveling, výdrž staletí)
 ```
 
 RTC RAM přežije deep sleep, ale **ne výpadek napájení**.
@@ -686,7 +701,7 @@ firmware automaticky aktivuje tlačítko (IO5) a LED (IO9). Při bootu stiskni t
 
 ### Potvrzovací fáze
 
-Po uvolnění v akční zóně LED **3 sekundy bliká** (250 ms střídání). Tato fáze slouží jako pojistka:
+Po uvolnění v akční zóně LED **5 sekund bliká** (250 ms střídání). Tato fáze slouží jako pojistka:
 
 - **Nestiskneš nic** → po 5 sekundách se akce provede a ESP restartuje.
 - **Stiskneš tlačítko** (kdykoli během blikání) → akce se **zruší**, boot pokračuje normálně.
@@ -852,7 +867,7 @@ Volné:                 3 652 B
 ```
 nvsLocalBuf (150 × 40 B):  6 000 B   ← statická globální proměnná, načtena lazy
 NVS klíče: "cnt" + "buf"              ← namespace "meteo" v Preferences
-Zápisy: ~1×/hodinu → výdrž 11+ let
+Zápisy: ~1×/hodinu → opotřebení zanedbatelné (wear-leveling)
 ```
 
 ### Struktura záznamu `Measurement` (40 B)
