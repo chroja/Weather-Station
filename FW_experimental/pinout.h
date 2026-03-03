@@ -29,10 +29,10 @@
 #if BOARD_VERSION == 41
 
 // ── LaskaKit Meteo Mini v4.1+ ────────────────────────────────────────────────
-// IO4 = EN uSUP/VSENSOR; IO5 = tlačítko; IO9 = SK6812 RGBW LED
+// IO4 = EN uSUP/VSENSOR; IO5 = tlačítko; IO9 = SK6812 RGB LED
 #define PIN_I2C_PWR   4   // EN uSUP / VSENSOR (IO4)
 #define PIN_BTN       5   // IO5 — tlačítko (aktivní LOW, pull-up 10 kΩ na VSENSOR, 1 µF debounce)
-#define PIN_LED       9   // IO9 — SK6812-EC20 RGBW LED (napájení přes PIN_I2C_PWR)
+#define PIN_LED       9   // IO9 — SK6812-EC20 RGB LED (napájení přes PIN_I2C_PWR)
 
 #elif BOARD_VERSION >= 35
 

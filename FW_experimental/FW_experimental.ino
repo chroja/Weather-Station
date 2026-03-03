@@ -762,22 +762,22 @@ void clearAllBuffers() {
 
 #if defined(HAS_BUTTON) && defined(HAS_NEOPIXEL)
 
-static Adafruit_NeoPixel btnLed(1, PIN_LED, NEO_GRBW + NEO_KHZ800);
+static Adafruit_NeoPixel btnLed(1, PIN_LED, NEO_GRB + NEO_KHZ800);
 
-// R,G,B,W pro každou zónu (SK6812 RGBW)
-static const uint8_t ZONE_COLORS[6][4] = {
-    { 0, 50,  0,  0},  // 0: zelená  — normální boot   (0–ZONE1)
-    { 0,  0, 50,  0},  // 1: modrá   — reset WiFi      (ZONE1–ZONE2)
-    { 0, 30, 30,  0},  // 2: cyan    — smaž buffery    (ZONE2–ZONE3)
-    { 0,  0,  0, 50},  // 3: bílá    — factory bez WiFi (ZONE3–ZONE4)
-    {50,  0,  0,  0},  // 4: červená — factory úplný   (ZONE4–ZONE5)
-    { 0, 50,  0,  0},  // 5: zelená  — přestřeleno     (ZONE5+)
+// R,G,B pro každou zónu (SK6812 RGB)
+static const uint8_t ZONE_COLORS[6][3] = {
+    { 0, 50,  0},  // 0: zelená  — normální boot   (0–ZONE1)
+    { 0,  0, 50},  // 1: modrá   — reset WiFi      (ZONE1–ZONE2)
+    { 0, 30, 30},  // 2: cyan    — smaž buffery    (ZONE2–ZONE3)
+    {50, 50, 50},  // 3: bílá    — factory bez WiFi (ZONE3–ZONE4)
+    {50,  0,  0},  // 4: červená — factory úplný   (ZONE4–ZONE5)
+    { 0, 50,  0},  // 5: zelená  — přestřeleno     (ZONE5+)
 };
 
 static void btnLedSet(uint8_t zone) {
     btnLed.setPixelColor(0, btnLed.Color(
         ZONE_COLORS[zone][0], ZONE_COLORS[zone][1],
-        ZONE_COLORS[zone][2], ZONE_COLORS[zone][3]));
+        ZONE_COLORS[zone][2]));
     btnLed.show();
 }
 
@@ -874,6 +874,16 @@ void checkBootButton() {
             break;
     }
 
+    // Ulož zónu do NVS — přežije restart spolehlivě (RTC zápisy nemusí být flushed)
+    // rtcMagic = 0 → powerLoss detekce → zaručený reset bootCount přes powerLoss blok
+    {
+        Preferences p;
+        p.begin("meteo", false);
+        p.putUChar("btnact", zone);
+        p.end();
+    }
+    rtcMagic = 0;
+
     Serial.flush();
     delay(200);
     esp_restart();
@@ -912,7 +922,8 @@ void setup() {
     Wire.begin(PIN_SDA, PIN_SCL);
 
     // ── Detekce výpadku napájení ──────────────────────────────────────────────
-    bool powerLoss = (rtcMagic != RTC_MAGIC);
+    bool    powerLoss = (rtcMagic != RTC_MAGIC);
+    uint8_t btnAction = 0;   // != 0 pokud byl restart vyvolán tlačítkem (zóna 1-4)
     if (powerLoss) {
         rtcMagic      = RTC_MAGIC;
         bufferCount   = 0;
@@ -924,14 +935,20 @@ void setup() {
         s1LastCode = s2LastCode = s3LastCode = 0;
         nvs1Sent = nvs2Sent = nvs3Sent = 0;
         wifiConfigured  = true;  // předpokládáme uložené WiFi credentials z NVS
-        lastRunDuration = 0;     // neznámá délka předchozího cyklu po výpadku
-        // Načíst NVS metadata a inkrementovat počítadlo výpadků
+        lastRunDuration = 0;
         Preferences p;
         p.begin("meteo", false);
-        nvsCount     = p.getUChar("cnt",   0);
-        powerLossCnt = p.getUChar("ploss", 0);
-        if (powerLossCnt < 255) powerLossCnt++;
-        p.putUChar("ploss", powerLossCnt);
+        nvsCount  = p.getUChar("cnt",    0);
+        btnAction = p.getUChar("btnact", 0);
+        if (btnAction != 0) {
+            p.remove("btnact");
+            powerLossCnt = p.getUChar("ploss", 0);  // neinkrementuj — nebyl výpadek
+            if (btnAction == 1 || btnAction == 4) wifiConfigured = false;
+        } else {
+            powerLossCnt = p.getUChar("ploss", 0);
+            if (powerLossCnt < 255) powerLossCnt++;
+            p.putUChar("ploss", powerLossCnt);
+        }
         p.end();
     }
 
@@ -968,8 +985,13 @@ void setup() {
         DLOG(1, "║  Čas:  %-29s ║\n", formatTimestamp(getCurrentTimestamp()).c_str());
     else
         DLOGLN(1, "║  Čas:  nesynchronizováno             ║");
-    if (powerLoss)
+    if (powerLoss && btnAction == 0)
         DLOGLN(1, "║  [!] VÝPADEK NAPÁJENÍ — RTC resetován ║");
+    if (btnAction != 0) {
+        static const char* const BTN_NAMES[] =
+            {"", "reset WiFi", "smazání bufferů", "factory bez WiFi", "factory úplný"};
+        DLOG(1, "║  [Button] %-26s ║\n", btnAction <= 4 ? BTN_NAMES[btnAction] : "?");
+    }
     DLOGLN(1, "╚══════════════════════════════════════╝");
 
     // ── Konfigurace ───────────────────────────────────────────────────────────

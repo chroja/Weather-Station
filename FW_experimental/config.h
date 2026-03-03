@@ -6,12 +6,12 @@
 
 // ── Hardware verze ────────────────────────────────────────────────────────────
 // Nastav číslo své desky (verze × 10, tedy v3.5 = 35, v4.1 = 41).
-// Desky v4.1+ mají tlačítko (IO5) a SK6812 RGBW LED (IO9) — firmware je aktivuje automaticky.
+// Desky v4.1+ mají tlačítko (IO5) a SK6812 RGB LED (IO9) — firmware je aktivuje automaticky.
 #define BOARD_VERSION  41   // LaskaKit Meteo Mini: 35 = v3.5  |  41 = v4.1+
 
 #if BOARD_VERSION >= 41
 #define HAS_BUTTON    // tlačítko na IO5 (aktivní LOW, ext. pull-up 10 kΩ na 3V3, 1 µF debounce)
-#define HAS_NEOPIXEL  // SK6812 RGBW LED na IO9 (napájení přes VSENSOR / PIN_I2C_PWR)
+#define HAS_NEOPIXEL  // SK6812 RGB LED na IO9 (napájení přes VSENSOR / PIN_I2C_PWR)
 #endif
 
 // Časování zón tlačítka (ms od stisku; platné pouze s HAS_BUTTON + HAS_NEOPIXEL)

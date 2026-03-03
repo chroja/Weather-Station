@@ -829,7 +829,7 @@ Piny jsou definovány v `pinout.h` a vybírány automaticky podle `BOARD_VERSION
 | uSUP EN / VSENSOR | `PIN_I2C_PWR` | **GPIO 3** | **GPIO 4** | napájení senzorů a LED |
 | ADC baterie | `PIN_ADC` | GPIO 0 | GPIO 0 | dělič napětí na desce |
 | Tlačítko | `PIN_BTN` | — | GPIO 5 | aktivní LOW, pull-up 10 kΩ na VSENSOR, 1 µF |
-| LED SK6812 | `PIN_LED` | — (IO9=FLASH) | GPIO 9 | RGBW NeoPixel, napájení přes PIN_I2C_PWR |
+| LED SK6812 | `PIN_LED` | — (IO9=FLASH) | GPIO 9 | RGB NeoPixel, napájení přes PIN_I2C_PWR |
 | 1-Wire DS18B20 | `PIN_1WIRE` | GPIO 10 | GPIO 10 | pin na desce, zatím neosazeno |
 
 > Pro správný výběr pinů stačí nastavit `BOARD_VERSION` v `config.h`:
