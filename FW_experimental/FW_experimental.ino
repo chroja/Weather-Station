@@ -870,7 +870,7 @@ void setup() {
     m.pcbTemp       = -100.0f;
     m.relHumidity   = m.pressure = m.absHumidity = m.als = m.uvs = -1.0f;
     m.batVoltage    = readBatVoltage();
-    m.pcbTemp       = temperatureRead();  // interní teplotní senzor ESP32 čipu (±3–5°C, bez kalibrace)
+    m.pcbTemp       = temperatureRead() + PCB_TEMP_OFFSET;
     DLOG(2, "  ESP32 PCB: %.1f°C\n", m.pcbTemp);
     m.timestamp     = getCurrentTimestamp();
     if (shtOK) readSHT40(m);
@@ -904,6 +904,14 @@ void setup() {
     // napájení, kdy WiFi selže a NTP se nikdy neprovedl. Data bez časového kontextu
     // nemají v time-series databázi smysl (TMEP by jim přiřadil čas odeslání).
     DLOGLN(2, "\n[Buffer]");
+    // Validace fyzikálně smysluplných hodnot
+    bool validT  = (m.temperature  < -60.f || m.temperature  > 85.f);
+    bool validRH = (m.relHumidity  > 105.f);
+    if (validT)  DLOG(1, "  [!] Teplota mimo rozsah (%.1f°C) — ukládám jako nedostupnou\n", m.temperature);
+    if (validRH) DLOG(1, "  [!] Vlhkost mimo rozsah (%.1f%%) — ukládám jako nedostupnou\n", m.relHumidity);
+    if (validT)  { m.temperature = -100.f; m.relHumidity = -1.f; m.absHumidity = -1.f; }
+    if (validRH) { m.relHumidity = -1.f; m.absHumidity = -1.f; }
+
     if (m.timestamp == 0) {
         DLOGLN(1, "  [!] Měření zahozeno — žádný čas (WiFi nedostupná při prvním bootu)");
     } else {

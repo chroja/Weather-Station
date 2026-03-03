@@ -132,6 +132,8 @@ Přepínač `#define TEST_MODE` v `.ino` (před `#include "config.h"`) vybírá 
 - ✓ HTTP_STALE_RESPONSE auto-skip — při HTTP 400 + shoda řetězce z `config.h` přeskočí nejstarší záznam
   a ihned retryuje; buffer se vyčistí postupně ve stejném bootu bez zásahu uživatele
 - ✓ HTTP timeout (`HTTP_TIMEOUT_SEC=8` v config.h) — `http.setTimeout()` před POST, ochrana před zaseknutím při slabém signálu
+- ✓ `PCB_TEMP_OFFSET` v config.h — offset interního senzoru ESP32, přičte se k `temperatureRead()`
+- ✓ Validace naměřených hodnot — T mimo −60…85°C nebo RH > 105 % → uložit jako nedostupné (−100 / −1)
 
 ### Střednědobé (hardware)
 - DS3231 RTC — přidat až bude k dispozici modul

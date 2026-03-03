@@ -37,9 +37,8 @@
 
 - [ ] **Adaptivní sleep podle napětí baterie** — nízká baterie → delší spánek (méně WiFi pokusů)
 - [ ] **Snížení CPU frekvence při měření** — `setCpuFrequencyMhz(80)` před senzory, úspora energie
-- [ ] **Kalibrace `pcbTemp`** — přidat `PCB_TEMP_OFFSET` do `config.h` (senzor má ±3–5°C odchylku)
-- [ ] **Validace naměřených hodnot** — odmítnout fyzikálně nesmyslná data před zápisem do bufferu
-  (T < -60°C nebo > 85°C, RH > 105 %)
+- [x] **Kalibrace `pcbTemp`** — `PCB_TEMP_OFFSET` v `config.h`, přičte se k `temperatureRead()`
+- [x] **Validace naměřených hodnot** — T mimo −60…85°C nebo RH > 105 % → uložit jako nedostupné
 
 ---
 

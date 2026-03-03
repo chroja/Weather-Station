@@ -50,6 +50,11 @@
 // Nastav na "" pro vypnutí automatického přeskakování.
 #define HTTP_STALE_RESPONSE "older than last known value"
 
+// ── Kalibrace senzorů ─────────────────────────────────────────────────────────
+// Interní teplotní senzor ESP32 má ±3–5°C odchylku. Změř rozdíl vůči referenci
+// a nastav offset (přičte se k surové hodnotě). Kladný = senzor podhodnocuje.
+#define PCB_TEMP_OFFSET   0.0f   // °C offset interního teplotního senzoru ESP32
+
 // ── Debug ─────────────────────────────────────────────────────────────────────
 // 0 = ticho (produkce bez USB) | 1 = chyby + souhrn | 2 = normální | 3 = verbose (CSV)
 // Pokud USB CDC není připojeno, debug level se automaticky nastaví na 0.

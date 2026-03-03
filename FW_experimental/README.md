@@ -211,6 +211,7 @@ Na začátku souboru jsou přepínače:
 | `DEBUG_LEVEL` | `3` | `2` | Výchozí debug level (s USB kabelem) |
 | `TIMEZONE` | `CET-1CEST,...` | dle umístění | POSIX TZ string |
 | `HTTP_STALE_RESPONSE` | `"older than last known value"` | beze změny | Řetězec hledaný v HTTP 400 odpovědi; shoda = přeskočit nejstarší záznam a okamžitě retryovat; `""` = vypnuto |
+| `PCB_TEMP_OFFSET` | `0.0` | dle kalibrace | Offset interního teplotního senzoru ESP32 v °C (přičte se k surové hodnotě); viz sekce 8 |
 
 > **SLEEP_SEC = 15** je jen pro testování — baterie by nevydržela. Pro venkovní provoz nastav **60** (1 měření/min).
 
