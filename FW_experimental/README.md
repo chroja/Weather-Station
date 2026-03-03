@@ -205,7 +205,9 @@ Na začátku souboru jsou přepínače:
 | Konstanta | Výchozí | Doporučení pro produkci | Popis |
 |---|---|---|---|
 | `SLEEP_SEC` | `15` | `60` | Perioda měření v sekundách |
-| `WIFI_TIMEOUT_SEC` | `10` | `10` | Max. čekání na WiFi |
+| `SLEEP_MIN_SEC` | `30` | `30` | Minimální spánek při překročení SLEEP_SEC |
+| `WIFI_TIMEOUT_SEC` | `10` | `10` | Max. čekání na WiFi připojení |
+| `HTTP_TIMEOUT_SEC` | `8` | `8` | Max. čekání na odpověď HTTP serveru; při překročení vrací `-1` |
 | `DEBUG_LEVEL` | `3` | `2` | Výchozí debug level (s USB kabelem) |
 | `TIMEZONE` | `CET-1CEST,...` | dle umístění | POSIX TZ string |
 | `HTTP_STALE_RESPONSE` | `"older than last known value"` | beze změny | Řetězec hledaný v HTTP 400 odpovědi; shoda = přeskočit nejstarší záznam a okamžitě retryovat; `""` = vypnuto |

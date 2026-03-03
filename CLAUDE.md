@@ -127,10 +127,11 @@ Přepínač `#define TEST_MODE` v `.ino` (před `#include "config.h"`) vybírá 
 - ✓ secrets.h oddělení od config.h
 - ✓ adjSent oprava v doCompact/flashAppend + unit test TEST_ADJSENT
 - ✓ S3 jako diagnostické centrum (pcbTemp, powerLossCnt, runDuration)
-- ✓ Minimum sleep 30 s (ochrana při překročení SLEEP_SEC)
+- ✓ Minimum sleep (`SLEEP_MIN_SEC=30` v config.h, ochrana při překročení SLEEP_SEC)
 - ✓ CLEAR_BUFFERS compile-time switch — `clearAllBuffers()` smaže RTC i NVS; po použití zakomentovat
 - ✓ HTTP_STALE_RESPONSE auto-skip — při HTTP 400 + shoda řetězce z `config.h` přeskočí nejstarší záznam
   a ihned retryuje; buffer se vyčistí postupně ve stejném bootu bez zásahu uživatele
+- ✓ HTTP timeout (`HTTP_TIMEOUT_SEC=8` v config.h) — `http.setTimeout()` před POST, ochrana před zaseknutím při slabém signálu
 
 ### Střednědobé (hardware)
 - DS3231 RTC — přidat až bude k dispozici modul

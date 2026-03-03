@@ -492,6 +492,7 @@ int httpPostCsv(const char* label, const char* url, const String& csvBody,
     HTTPClient http;
     unsigned long t = millis();
     http.begin(client, url);
+    http.setTimeout(HTTP_TIMEOUT_SEC * 1000);
     http.addHeader("Content-Type", "text/csv");
     int code = http.POST(csvBody);
     String resp = http.getString();
@@ -945,7 +946,7 @@ void setup() {
     lastRunDuration = (uint8_t)min(elapsedMs / 1000UL, 255UL);  // uložit pro příští cyklus
     uint64_t sleepUs = (SLEEP_SEC * 1000UL > elapsedMs)
                        ? ((uint64_t)(SLEEP_SEC * 1000UL - elapsedMs)) * 1000ULL
-                       : 30000000ULL;  // minimum 30 s (ochrana při překročení SLEEP_SEC)
+                       : (uint64_t)SLEEP_MIN_SEC * 1000000ULL;
     DLOG(1, "\n[Spánek] běh:%lu ms → spánek:%llu ms\n\n", elapsedMs, sleepUs / 1000ULL);
     esp_sleep_enable_timer_wakeup(sleepUs);
     esp_deep_sleep_start();

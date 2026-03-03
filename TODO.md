@@ -28,8 +28,8 @@
 ---
 
 ## Firmware — opravy chyb
-- [ ] **HTTP timeout** — HTTPClient používá výchozí timeout ESP32, který může přesáhnout SLEEP_SEC;
-  při slabém signálu hrozí zaseknutí bootu. Nastavit explicitní timeout (např. 8 s).
+- [x] **HTTP timeout** — `http.setTimeout(HTTP_TIMEOUT_SEC * 1000)` před POST; hodnota konfigurovatelná
+  v `config.h` jako `HTTP_TIMEOUT_SEC` (výchozí 8 s)
 
 ---
 
