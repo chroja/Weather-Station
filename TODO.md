@@ -45,26 +45,24 @@
 ## Firmware — diagnostika
 
 - [x] **Počítadlo výpadků napájení v NVS** — viz Hotovo → `powerLossCnt` (klíč `ploss`)
-- [ ] **`esp_reset_reason()`** — zobrazit v záhlaví příčinu wakeup
-  (deep sleep timer vs. watchdog reset vs. výpadek napájení)
+- [x] **`esp_reset_reason()`** — zobrazit v záhlaví příčinu resetu
+  (power-on / sleep / restart / brownout / panic / watchdog); lambda v setup(), řádek Boot #
 
 ---
 
 ## Hardware — plánované doplnění
 
-- [ ] **DS3231 RTC** — přidat až bude k dispozici modul
-  - přesnější timestampy (bez driftu boot counteru)
-  - čas zachován i po výpadku napájení (CR2032 baterie)
-- [x] **Button + NeoPixel (v4.1+)** — boot tlačítko IO5 s SK6812 RGBW LED na IO9; zóny 0–8s určují
-  akci (normální boot / reset WiFi / smaž buffery / tovární reset); potvrzovací blikání 3s s možností
-  zrušení opětovným stiskem; aktivováno přes `HAS_BUTTON`/`HAS_NEOPIXEL` v `config.h` (výchozí: zakomentováno)
-- [ ] **DS18B20** — pin připraven na desce, až bude modul po ruce
+- [x] **Button + NeoPixel (v4.1+)** — boot tlačítko IO5 s SK6812 RGBW LED na IO9; zóny 0–10s určují
+  akci (modrá=reset WiFi / cyan=smaž buffery / bílá=factory bez WiFi / červená=factory úplný);
+  potvrzovací blikání 5s s možností zrušení opětovným stiskem; aktivováno přes `BOARD_VERSION >= 41`
+- [ ] **DS18B20** — deska je připravena pro osazení čidla (PIN_1WIRE = IO10), čidlo momentálně neosazeno
 
 ---
 
 ## Velká změna architektury — ESP-NOW + indoor gateway
 
 ### Fáze 1 — Venkovní jednotka: přechod na ESP-NOW
+- [ ] **DS3231 RTC** — zvážit přidání pro přesné timestampy bez NTP; relevatní až po přechodu na ESP-NOW
 - [ ] Odstranit WiFi připojení k routeru z venkovní jednotky
 - [ ] Implementovat ESP-NOW vysílač
   - sestavit packet struct se všemi naměřenými hodnotami

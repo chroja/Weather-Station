@@ -940,6 +940,20 @@ void setup() {
     tzset();
 
     // ── Záhlaví ──────────────────────────────────────────────────────────────
+    auto resetStr = [] {
+        switch (esp_reset_reason()) {
+            case ESP_RST_POWERON:   return "power-on";
+            case ESP_RST_DEEPSLEEP: return "sleep";
+            case ESP_RST_SW:        return "restart";
+            case ESP_RST_EXT:       return "ext. reset";
+            case ESP_RST_BROWNOUT:  return "BROWNOUT (!)";
+            case ESP_RST_PANIC:     return "PANIC (!)";
+            case ESP_RST_INT_WDT:   return "WDT-INT (!)";
+            case ESP_RST_TASK_WDT:  return "WDT-TASK (!)";
+            case ESP_RST_WDT:       return "WDT (!)";
+            default:                return "?";
+        }
+    };
     DLOGLN(1, "");
     DLOGLN(1, "╔══════════════════════════════════════╗");
 #ifdef TEST_MODE
@@ -947,7 +961,7 @@ void setup() {
 #else
     DLOGLN(1, "║  LaskaKit Meteo Mini [EXPERIMENT]    ║");
 #endif
-    DLOG(1,   "║  Boot #%-5lu                          ║\n", (unsigned long)bootCount);
+    DLOG(1,   "║  Boot #%-5lu  Reset: %-14s ║\n", (unsigned long)bootCount, resetStr());
     DLOG(1,   "║  RTC: %3u/%-3u   NVS: %3u/%-3u          ║\n",
          bufferCount, (uint8_t)BUFFER_MAX, nvsCount, (uint8_t)FLASH_MAX);
     if (lastNTPTime > 0)
