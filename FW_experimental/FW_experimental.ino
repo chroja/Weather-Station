@@ -16,10 +16,8 @@
  */
 
 // testovací provoz
-#define TEST_MODE
-//#define TEST_SEND        // diagnostika: odeslat pevný CSV řádek místo bufferu
-//#define TEST_ADJSENT     // jednotkový test: ověří opravu adjSent po tieredCompact/flashAppend
-//#define CLEAR_BUFFERS    // jednorázové vymazání všech bufferů (RTC + NVS); po nahrání zakomentuj
+#define TEST_MODE           // zapne testovací URL
+//#define CLEAR_BUFFERS     // jednorázové vymazání všech bufferů (RTC + NVS); po nahrání zakomentuj
 
 // Interní kód: HTTP 400 + staré datum → přeskočit nejstarší záznam (viz HTTP_STALE_RESPONSE)
 #define HTTP_STALE  (-2)
@@ -50,7 +48,7 @@ struct Measurement {
     uint32_t timestamp;    // Unix UTC (0 = neznámý)
     uint8_t  tier;         // vrstva: 0=1min  1=10min  2=1h
     uint8_t  powerLossCnt; // počet výpadků napájení od prvního spuštění (z NVS, max 255)
-    uint8_t  runDuration;  // délka předchozího boot cyklu v s (0 = první boot / neznámý)
+    uint8_t  runDuration;  // délka předchozího boot cyklu v 0.1 s (0 = první boot / neznámý; max 25.5 s)
     uint8_t  _pad;         // padding na 4 B hranici
     float    temperature;  // °C   (-100 = nedostupný)
     float    relHumidity;  // % RH (  -1 = nedostupný)
@@ -79,7 +77,7 @@ RTC_DATA_ATTR uint8_t     nvs2Sent       = 0;
 RTC_DATA_ATTR uint8_t     nvs3Sent       = 0;
 RTC_DATA_ATTR uint8_t     nvsCount       = 0;      // cache počtu záznamů v NVS
 // Diagnostika
-RTC_DATA_ATTR uint8_t     lastRunDuration = 0;  // délka předchozího cyklu v s (uložena před spánkem)
+RTC_DATA_ATTR uint8_t     lastRunDuration = 0;  // délka předchozího cyklu v 0.1 s (uložena před spánkem)
 RTC_DATA_ATTR uint8_t     powerLossCnt    = 0;  // počet výpadků napájení (načten z NVS při powerLoss)
 // Per-server statistiky selhání
 RTC_DATA_ATTR uint8_t     s1Fail         = 0;
@@ -105,6 +103,8 @@ static uint8_t debugLevel = 0;
 #define DLOG(lvl, ...)  do { if (debugLevel >= (lvl)) Serial.printf(__VA_ARGS__); } while(0)
 #define DLOGLN(lvl, s)  do { if (debugLevel >= (lvl)) Serial.println(s); } while(0)
 #define DPRINT(lvl, s)  do { if (debugLevel >= (lvl)) Serial.print(s); } while(0)
+
+#include "test.h"
 
 // ----------------------------------------
 // Timestamp
@@ -432,7 +432,9 @@ String buildCsvFrom(const Measurement* buf, uint8_t from, uint8_t count,
             csv += buildCsvRow(m.timestamp,
                                m.pcbTemp > -99.f ? String(m.pcbTemp, 1) : "",
                                String(m.powerLossCnt),
-                               String(m.runDuration),
+                               (m.runDuration <= 150)
+                                   ? String(m.runDuration / 10.0f, 1)
+                                   : String((int)(m.runDuration - 135)),
                                m.batVoltage, rssi);
     }
     csv.trim();
@@ -625,102 +627,6 @@ void sendAllBuffered(int rssi) {
 }
 
 // ----------------------------------------
-
-#ifdef TEST_SEND
-void sendTest() {
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
-    http.begin(client, serverName1);
-    http.addHeader("Content-Type", "text/csv");
-    String csv = "2026-03-01 16:30:00;23.17;54.43;1004.07;4.084;-44";
-    int code = http.POST(csv);
-    Serial.printf("TEST_SEND: HTTP %d\n", code);
-    Serial.println(http.getString());
-    http.end();
-}
-#endif
-
-// unit testy adjSent
-#ifdef TEST_ADJSENT
-void testAdjSent() {
-    uint8_t fails = 0;
-
-    // test1: doCompact — s*Sent za kompakcí → posunout zpět
-    // 70 tier0, S1+S3 odeslaly 69, S2 nic → bc=61, s1=60, s2=0, s3=60
-    bufferCount = 70;
-    for (uint8_t i = 0; i < 70; i++) {
-        buffer[i] = {}; buffer[i].tier = 0;
-        buffer[i].timestamp = 1700000000UL + i * 60;
-    }
-    s1Sent = 69; s2Sent = 0; s3Sent = 69;
-    tieredCompact();
-    if (bufferCount != 61 || s1Sent != 60 || s2Sent != 0 || s3Sent != 60) {
-        Serial.printf("  [FAIL] test1: bc=%u s1=%u s2=%u s3=%u  (exp 61/60/0/60)\n",
-                      bufferCount, s1Sent, s2Sent, s3Sent);
-        fails++;
-    } else { Serial.println("  [PASS] test1: doCompact — posun zpět"); }
-
-    // test2: doCompact — s*Sent uvnitř kompakcí → zarovnat na startIdx
-    // 70 tier0, S1 odeslal 5, S3 vše, S2 nic → s1=0, s2=0, s3=60
-    bufferCount = 70;
-    for (uint8_t i = 0; i < 70; i++) {
-        buffer[i] = {}; buffer[i].tier = 0;
-        buffer[i].timestamp = 1700000000UL + i * 60;
-    }
-    s1Sent = 5; s2Sent = 0; s3Sent = 69;
-    tieredCompact();
-    if (bufferCount != 61 || s1Sent != 0 || s2Sent != 0 || s3Sent != 60) {
-        Serial.printf("  [FAIL] test2: bc=%u s1=%u s2=%u s3=%u  (exp 61/0/0/60)\n",
-                      bufferCount, s1Sent, s2Sent, s3Sent);
-        fails++;
-    } else { Serial.println("  [PASS] test2: doCompact — zarovnání uvnitř"); }
-
-    // test3: flashAppend — s*Sent >= 6 → posunout zpět
-    // 42 tier1, S1+S3 odeslaly 40, S2 nic → bc=36, s1=34, s2=0, s3=34
-    bufferCount = 42;
-    for (uint8_t i = 0; i < 42; i++) {
-        buffer[i] = {}; buffer[i].tier = 1;
-        buffer[i].timestamp = 1700000000UL + i * 600;
-    }
-    s1Sent = 40; s2Sent = 0; s3Sent = 40;
-    nvsLoaded = true; nvsCount = 0;  // lazy load přeskočit, NVS zapíše 1 testovací záznam
-    tieredCompact();
-    if (bufferCount != 36 || s1Sent != 34 || s2Sent != 0 || s3Sent != 34) {
-        Serial.printf("  [FAIL] test3: bc=%u s1=%u s2=%u s3=%u  (exp 36/34/0/34)\n",
-                      bufferCount, s1Sent, s2Sent, s3Sent);
-        fails++;
-    } else { Serial.println("  [PASS] test3: flashAppend — posun zpět"); }
-
-    // test4: flashAppend — s*Sent < 6 → zarovnat na 0
-    // 42 tier1, S1 odeslal 3, S2 nic, S3 vše → s1=0, s2=0, s3=34
-    bufferCount = 42;
-    for (uint8_t i = 0; i < 42; i++) {
-        buffer[i] = {}; buffer[i].tier = 1;
-        buffer[i].timestamp = 1700000000UL + i * 600;
-    }
-    s1Sent = 3; s2Sent = 0; s3Sent = 40;
-    nvsLoaded = true; nvsCount = 0;
-    tieredCompact();
-    if (bufferCount != 36 || s1Sent != 0 || s2Sent != 0 || s3Sent != 34) {
-        Serial.printf("  [FAIL] test4: bc=%u s1=%u s2=%u s3=%u  (exp 36/0/0/34)\n",
-                      bufferCount, s1Sent, s2Sent, s3Sent);
-        fails++;
-    } else { Serial.println("  [PASS] test4: flashAppend — zarovnání pod 6"); }
-
-    Serial.printf("  → Výsledek: %s (%u/%u testů OK)\n\n",
-                  fails == 0 ? "VSE PROSEL" : "CHYBY!", 4 - fails, 4);
-
-    // Reset pro normální provoz — vymazat i testovací záznamy z NVS flash
-    bufferCount = 0; s1Sent = s2Sent = s3Sent = 0;
-    nvs1Sent = nvs2Sent = nvs3Sent = 0;
-    nvsLoaded = true; nvsCount = 0;
-    nvsFlush();       // zapíše cnt=0 do NVS → testovací záznamy se nepřenesou do reálného provozu
-    nvsLoaded = false;
-}
-#endif
-
-// ----------------------------------------
 // Vymazání bufferů — voláno z CLEAR_BUFFERS i z checkBootButton()
 
 void clearAllBuffers() {
@@ -891,6 +797,10 @@ void setup() {
 #ifdef TEST_ADJSENT
     Serial.println("\n[TEST_ADJSENT] Spouštím testy adjSent...");
     testAdjSent();
+#endif
+#ifdef TEST_RUNDURATION
+    Serial.println("\n[TEST_RUNDURATION] Spouštím testy runDuration encoding...");
+    testRunDuration();
 #endif
 
     pinMode(PIN_I2C_PWR, OUTPUT);
@@ -1085,7 +995,12 @@ void setup() {
     // spánek
     digitalWrite(PIN_I2C_PWR, LOW);
     unsigned long elapsedMs = millis() - startMs;
-    lastRunDuration = (uint8_t)min(elapsedMs / 1000UL, 255UL);  // uložit pro příští cyklus
+    {   // nelineární encoding: 0–150 = 0.0–15.0 s (0.1 s kroky), 151–255 = 16–120 s (1 s kroky)
+        uint32_t tenths = elapsedMs / 100UL;
+        lastRunDuration = (tenths <= 150)
+            ? (uint8_t)tenths
+            : (uint8_t)min(135UL + elapsedMs / 1000UL, 255UL);
+    }
     uint64_t sleepUs = (SLEEP_SEC * 1000UL > elapsedMs)
                        ? ((uint64_t)(SLEEP_SEC * 1000UL - elapsedMs)) * 1000ULL
                        : (uint64_t)SLEEP_MIN_SEC * 1000000ULL;
