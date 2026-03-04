@@ -90,7 +90,7 @@ Otevři **Tools → Manage Libraries** a nainstaluj:
 | Adafruit SHT4x Library | Adafruit | ≥ 1.0 |
 | Adafruit BME280 Library | Adafruit | ≥ 2.2 |
 | Adafruit LTR390 Library | Adafruit | ≥ 1.0 |
-| Adafruit Unified Sensor | Adafruit | ≥ 1.1 |
+| Adafruit Unified Sensor | Adafruit | ≥ 1.1 | abstraktní vrstva — společná závislost Adafruit knihoven; Library Manager ji nabídne k instalaci automaticky |
 | Adafruit NeoPixel | Adafruit | ≥ 1.10 | pouze pro v4.1+ (`BOARD_VERSION >= 41`) |
 | WiFiManager | tzapu | ≥ 2.0 |
 

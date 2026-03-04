@@ -83,6 +83,12 @@ SW/tmep/weather_mini/config_my.h
 # Soubory s tajnými URL — vyplňuješ lokálně, do gitu nepatří
 secrets.h
 
+#############
+## AI asistent
+#############
+
+CLAUDE.md
+
 ############
 ## Windows
 ############
