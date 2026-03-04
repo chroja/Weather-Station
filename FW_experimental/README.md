@@ -190,9 +190,15 @@ Na začátku souboru jsou přepínače:
 
 ```cpp
 #define TEST_MODE
+// #define CLEAR_BUFFERS
+```
+
+Testovací přepínače jsou v `test.h` (odkomentuj tam):
+
+```cpp
 // #define TEST_SEND
 // #define TEST_ADJSENT
-// #define CLEAR_BUFFERS
+// #define TEST_RUNDURATION
 ```
 
 | Přepínač | Zapnutý | Vypnutý |
@@ -200,6 +206,7 @@ Na začátku souboru jsou přepínače:
 | `TEST_MODE` | Použijí se testovací URL ze `secrets.h` | Použijí se produkční URL |
 | `TEST_SEND` | Odešle jen jeden pevný CSV řádek (diagnostika spojení) | Normální provoz |
 | `TEST_ADJSENT` | Spustí 4 unit testy opravy adjSent a vypíše PASS/FAIL na Serial | Normální provoz |
+| `TEST_RUNDURATION` | Spustí unit testy nelineárního encodingu `runDuration` a vypíše PASS/FAIL na Serial | Normální provoz |
 | `CLEAR_BUFFERS` | Při startu smaže veškerá neodeslaná data (RTC buffer + NVS flash) | Normální provoz |
 
 > Pro první testování nech `TEST_MODE` zapnutý. Pro produkci zakomentuj: `// #define TEST_MODE`
@@ -877,7 +884,7 @@ Zápisy: ~1×/hodinu → opotřebení zanedbatelné (wear-leveling)
 | `timestamp` | `uint32_t` | 4 B | Unix UTC (0 = neznámý) |
 | `tier` | `uint8_t` | 1 B | Vrstva: 0=1min, 1=10min, 2=1h |
 | `powerLossCnt` | `uint8_t` | 1 B | Počet výpadků napájení od 1. spuštění (z NVS, max 255) |
-| `runDuration` | `uint8_t` | 1 B | Délka předchozího cyklu v s (0 = první boot / neznámý) |
+| `runDuration` | `uint8_t` | 1 B | Délka předchozího cyklu — nelineární encoding: 0–150 = 0.0–15.0 s (kroky 0.1 s), 151–255 = 16–120 s (kroky 1 s); 0 = první boot / neznámý |
 | `_pad` | `uint8_t` | 1 B | Zarovnání na 4 B |
 | `temperature` | `float` | 4 B | °C (-100 = nedostupný) |
 | `relHumidity` | `float` | 4 B | % RH (-1 = nedostupný) |
