@@ -15,7 +15,7 @@
  * Konfigurace: config.h
  */
 
-// ── Přepínač testovacího provozu ─────────────────────────────────────────────
+// testovací provoz
 #define TEST_MODE
 //#define TEST_SEND        // diagnostika: odeslat pevný CSV řádek místo bufferu
 //#define TEST_ADJSENT     // jednotkový test: ověří opravu adjSent po tieredCompact/flashAppend
@@ -40,12 +40,11 @@
 #include "Adafruit_LTR390.h"
 #include <time.h>
 
-// ── Hardwarové konstanty ──────────────────────────────────────────────────────
+// hardwarové konstanty
 #define BME280_ADDR  0x77
 #define ADC_TO_BATV  1.7857f   // kalibrováno: 2240 mV ADC = 4.0 V
 #define RTC_MAGIC    0x4D455447UL  // "METG" — detekce výpadku napájení (zvýšit při změně struktury)
 
-// ── Datová struktura jednoho měření ──────────────────────────────────────────
 // sizeof = 40 B (4+1+1+1+1 + 8×4)
 struct Measurement {
     uint32_t timestamp;    // Unix UTC (0 = neznámý)
@@ -63,7 +62,7 @@ struct Measurement {
     float    pcbTemp;      // °C   interní teplota ESP32 čipu (-100 = nedostupný)
 };
 
-// ── RTC RAM — přežije deep sleep, reset při výpadku napájení ─────────────────
+// RTC RAM — přežije deep sleep, reset při výpadku napájení
 RTC_DATA_ATTR uint32_t    rtcMagic       = 0;      // detekce výpadku napájení
 RTC_DATA_ATTR uint16_t    bufferCount    = 0;
 RTC_DATA_ATTR uint32_t    bootCount      = 0;
@@ -91,26 +90,24 @@ RTC_DATA_ATTR int16_t     s2LastCode     = 0;
 RTC_DATA_ATTR int16_t     s3LastCode     = 0;
 RTC_DATA_ATTR Measurement buffer[BUFFER_MAX];
 
-// ── NVS flash buffer — hodinové průměry, lazy load ───────────────────────────
+// NVS flash buffer — hodinové průměry, lazy load
 static Measurement nvsLocalBuf[FLASH_MAX];  // 5 400 B, načten z NVS při potřebě
 static bool        nvsLoaded = false;
 
-// ── Senzory ───────────────────────────────────────────────────────────────────
+// senzory
 Adafruit_SHT4x  sht4;
 Adafruit_BME280 bme;
 Adafruit_LTR390 ltr;
 
-// ── Debug ─────────────────────────────────────────────────────────────────────
-// 0 = ticho | 1 = chyby + souhrn | 2 = normal | 3 = verbose (CSV těla)
+// debug: 0 = ticho | 1 = chyby + souhrn | 2 = normal | 3 = verbose
 static uint8_t debugLevel = 0;
 
 #define DLOG(lvl, ...)  do { if (debugLevel >= (lvl)) Serial.printf(__VA_ARGS__); } while(0)
 #define DLOGLN(lvl, s)  do { if (debugLevel >= (lvl)) Serial.println(s); } while(0)
 #define DPRINT(lvl, s)  do { if (debugLevel >= (lvl)) Serial.print(s); } while(0)
 
-// =============================================================================
+// ----------------------------------------
 // Timestamp
-// =============================================================================
 
 uint32_t getCurrentTimestamp() {
     if (lastNTPTime == 0) return 0;
@@ -127,9 +124,8 @@ String formatTimestamp(uint32_t ts) {
     return String(buf);
 }
 
-// =============================================================================
+// ----------------------------------------
 // Baterie
-// =============================================================================
 
 float readBatVoltage() {
     uint32_t mv = analogReadMilliVolts(PIN_ADC);
@@ -138,9 +134,8 @@ float readBatVoltage() {
     return v;
 }
 
-// =============================================================================
+// ----------------------------------------
 // Senzory
-// =============================================================================
 
 void readSHT40(Measurement& m) {
     sht4.setPrecision(SHT4X_HIGH_PRECISION);
@@ -185,9 +180,8 @@ void readLTR390(Measurement& m) {
     } else { DLOGLN(2, " žádná data"); }
 }
 
-// =============================================================================
+// ----------------------------------------
 // WiFi
-// =============================================================================
 
 bool connectWiFi() {
     WiFi.mode(WIFI_STA);
@@ -210,9 +204,8 @@ bool connectWiFi() {
     return false;
 }
 
-// =============================================================================
+// ----------------------------------------
 // NTP
-// =============================================================================
 
 void syncNTP() {
     configTzTime(TIMEZONE, "pool.ntp.org", "time.nist.gov");
@@ -232,9 +225,8 @@ void syncNTP() {
     }
 }
 
-// =============================================================================
+// ----------------------------------------
 // NVS flash buffer — hodinové průměry
-// =============================================================================
 
 // Načte záznamy z NVS do nvsLocalBuf (lazy — volej před přístupem k nvsLocalBuf)
 void nvsEnsureLoaded() {
@@ -259,19 +251,16 @@ void nvsFlush() {
     p.end();
 }
 
-// =============================================================================
-// Buffer — tiered průměrování (tier0 → tier1 v RTC, tier1 → tier2 do NVS)
-// =============================================================================
+// ----------------------------------------
+// Buffer — tiered průměrování
 
-// Průměr n záznamů RTC bufferu od startIdx → nový záznam s daným tier
+// průměr n záznamů od startIdx → nový záznam s daným tier
 Measurement computeAverage(uint8_t startIdx, uint8_t n, uint8_t toTier) {
     float tSum=0, rhSum=0, pSum=0, ahSum=0, alsSum=0, uvsSum=0, batSum=0, pcbSum=0;
     uint8_t vT=0, vRH=0, vP=0, vAH=0, vALS=0, vUVS=0, vPCB=0;
-    uint32_t tsSum = 0;
     uint16_t rdSum = 0;
     for (uint8_t i = 0; i < n; i++) {
         const Measurement& r = buffer[startIdx + i];
-        tsSum  += r.timestamp / n;
         batSum += r.batVoltage;
         rdSum  += r.runDuration;
         if (r.temperature > -99.f) { tSum   += r.temperature;  vT++;   }
@@ -284,7 +273,7 @@ Measurement computeAverage(uint8_t startIdx, uint8_t n, uint8_t toTier) {
     }
     Measurement avg = {};
     avg.tier         = toTier;
-    avg.timestamp    = tsSum;
+    avg.timestamp    = ((uint64_t)buffer[startIdx].timestamp + buffer[startIdx + n - 1].timestamp) / 2;
     avg.batVoltage   = batSum / n;
     avg.runDuration  = (uint8_t)(rdSum / n);
     avg.powerLossCnt = buffer[startIdx + n - 1].powerLossCnt;  // poslední (nejvyšší) hodnota
@@ -392,7 +381,7 @@ void tieredCompact() {
         changed = false;
 
         uint8_t cnt0 = 0, cnt1 = 0;
-        for (uint8_t i = 0; i < bufferCount; i++) {
+        for (uint16_t i = 0; i < bufferCount; i++) {
             if      (buffer[i].tier == 0) cnt0++;
             else if (buffer[i].tier == 1) cnt1++;
         }
@@ -411,9 +400,8 @@ void tieredCompact() {
     }
 }
 
-// =============================================================================
+// ----------------------------------------
 // Odeslání — HTTPS batch POST
-// =============================================================================
 
 String buildCsvRow(uint32_t ts,
                    const String& g1, const String& g2, const String& g3,
@@ -592,7 +580,7 @@ void sendAllBuffered(int rssi) {
     uint8_t minSent = min({s1Sent, s2Sent, s3Sent});
 
     uint8_t cnt0 = 0, cnt1 = 0;
-    for (uint8_t i = 0; i < bufferCount; i++) {
+    for (uint16_t i = 0; i < bufferCount; i++) {
         if      (buffer[i].tier == 0) cnt0++;
         else if (buffer[i].tier == 1) cnt1++;
     }
@@ -636,9 +624,7 @@ void sendAllBuffered(int rssi) {
     }
 }
 
-// =============================================================================
-// Test funkce (TEST_SEND)
-// =============================================================================
+// ----------------------------------------
 
 #ifdef TEST_SEND
 void sendTest() {
@@ -655,17 +641,13 @@ void sendTest() {
 }
 #endif
 
-// =============================================================================
-// Jednotkový test adjSent (aktivovat: #define TEST_ADJSENT)
-// =============================================================================
-
+// unit testy adjSent
 #ifdef TEST_ADJSENT
 void testAdjSent() {
     uint8_t fails = 0;
 
-    // ── Test 1: doCompact — s*Sent za kompakcí (posunout zpět) ───────────────
-    // Stav: 70 tier0, S1+S3 odeslaly 69, S2 nic
-    // Po compact(startIdx=0, n=10): bufferCount=61, s1=60, s2=0, s3=60
+    // test1: doCompact — s*Sent za kompakcí → posunout zpět
+    // 70 tier0, S1+S3 odeslaly 69, S2 nic → bc=61, s1=60, s2=0, s3=60
     bufferCount = 70;
     for (uint8_t i = 0; i < 70; i++) {
         buffer[i] = {}; buffer[i].tier = 0;
@@ -679,9 +661,8 @@ void testAdjSent() {
         fails++;
     } else { Serial.println("  [PASS] test1: doCompact — posun zpět"); }
 
-    // ── Test 2: doCompact — s*Sent uvnitř kompakcí (zarovnat na startIdx) ───
-    // Stav: 70 tier0, S1 odeslal 5 (uvnitř prvních 10), S3 vše, S2 nic
-    // Po compact(0,10): s1=0 (zarovnáno), s2=0, s3=60
+    // test2: doCompact — s*Sent uvnitř kompakcí → zarovnat na startIdx
+    // 70 tier0, S1 odeslal 5, S3 vše, S2 nic → s1=0, s2=0, s3=60
     bufferCount = 70;
     for (uint8_t i = 0; i < 70; i++) {
         buffer[i] = {}; buffer[i].tier = 0;
@@ -695,9 +676,8 @@ void testAdjSent() {
         fails++;
     } else { Serial.println("  [PASS] test2: doCompact — zarovnání uvnitř"); }
 
-    // ── Test 3: flashAppend — s*Sent >= 6 (posunout zpět) ────────────────────
-    // Stav: 42 tier1, S1+S3 odeslaly 40, S2 nic
-    // Po flashAppend: bufferCount=36, s1=34, s2=0, s3=34
+    // test3: flashAppend — s*Sent >= 6 → posunout zpět
+    // 42 tier1, S1+S3 odeslaly 40, S2 nic → bc=36, s1=34, s2=0, s3=34
     bufferCount = 42;
     for (uint8_t i = 0; i < 42; i++) {
         buffer[i] = {}; buffer[i].tier = 1;
@@ -712,9 +692,8 @@ void testAdjSent() {
         fails++;
     } else { Serial.println("  [PASS] test3: flashAppend — posun zpět"); }
 
-    // ── Test 4: flashAppend — s*Sent < 6 (zarovnat na 0) ─────────────────────
-    // Stav: 42 tier1, S1 odeslal 3 (méně než 6), S2 nic, S3 vše
-    // Po flashAppend: s1=0, s2=0, s3=34
+    // test4: flashAppend — s*Sent < 6 → zarovnat na 0
+    // 42 tier1, S1 odeslal 3, S2 nic, S3 vše → s1=0, s2=0, s3=34
     bufferCount = 42;
     for (uint8_t i = 0; i < 42; i++) {
         buffer[i] = {}; buffer[i].tier = 1;
@@ -741,9 +720,8 @@ void testAdjSent() {
 }
 #endif
 
-// =============================================================================
+// ----------------------------------------
 // Vymazání bufferů — voláno z CLEAR_BUFFERS i z checkBootButton()
-// =============================================================================
 
 void clearAllBuffers() {
     bufferCount = 0;
@@ -756,9 +734,8 @@ void clearAllBuffers() {
     Serial.println("[clearAllBuffers] RTC buffer + NVS smazány.");
 }
 
-// =============================================================================
-// Boot tlačítko + NeoPixel (pouze HAS_BUTTON + HAS_NEOPIXEL)
-// =============================================================================
+// ----------------------------------------
+// Boot tlačítko + NeoPixel
 
 #if defined(HAS_BUTTON) && defined(HAS_NEOPIXEL)
 
@@ -892,9 +869,8 @@ void checkBootButton() {
 
 #endif  // HAS_BUTTON && HAS_NEOPIXEL
 
-// =============================================================================
-// Hlavní program
-// =============================================================================
+// ----------------------------------------
+// setup / loop
 
 void setup() {
     unsigned long startMs = millis();
@@ -922,7 +898,7 @@ void setup() {
     delay(10);
     Wire.begin(PIN_SDA, PIN_SCL);
 
-    // ── Detekce výpadku napájení ──────────────────────────────────────────────
+    // detekce výpadku napájení
     bool    powerLoss = (rtcMagic != RTC_MAGIC);
     uint8_t btnAction = 0;   // != 0 pokud byl restart vyvolán tlačítkem (zóna 1-4)
     if (powerLoss) {
@@ -957,7 +933,7 @@ void setup() {
     setenv("TZ", TIMEZONE, 1);
     tzset();
 
-    // ── Záhlaví ──────────────────────────────────────────────────────────────
+    // záhlaví
     auto resetStr = [] {
         switch (esp_reset_reason()) {
             case ESP_RST_POWERON:   return "power-on";
@@ -995,7 +971,7 @@ void setup() {
     }
     DLOGLN(1, "╚══════════════════════════════════════╝");
 
-    // ── Konfigurace ───────────────────────────────────────────────────────────
+    // konfigurace
     if (debugLevel >= 2) {
 #ifdef TEST_MODE
         DLOGLN(2, "\n[Konfigurace] TESTOVACÍ (TEST_MODE)");
@@ -1011,7 +987,7 @@ void setup() {
         DLOG(2, "  S3 → %s\n", host(serverName3).c_str());
     }
 
-    // ── Senzory ───────────────────────────────────────────────────────────────
+    // inicializace senzorů
     DLOGLN(2, "\n[Senzory]");
     bool shtOK = sht4.begin();
     bool bmeOK = bme.begin(BME280_ADDR);
@@ -1022,7 +998,7 @@ void setup() {
         DLOG(1, "  [!] Senzor nedostupný: %s%s%s\n",
              shtOK ? "" : "SHT40 ", bmeOK ? "" : "BME280 ", ltrOK ? "" : "LTR390");
 
-    // ── Měření ───────────────────────────────────────────────────────────────
+    // měření
     DLOGLN(2, "\n[Měření]");
     Measurement m = {};
     m.tier          = 0;
@@ -1039,8 +1015,7 @@ void setup() {
     if (bmeOK) readBME280(m);
     if (ltrOK) readLTR390(m);
 
-    // ── WiFi + NTP (před uložením do bufferu) ────────────────────────────────
-    // NTP sync proběhne dřív než uložení měření, aby timestamp byl platný.
+    // WiFi + NTP před uložením do bufferu, aby timestamp byl platný
     DLOGLN(2, "\n[WiFi]");
     //WiFiManager wm; wm.resetSettings();
     //wifiConfigured = false;
@@ -1061,18 +1036,15 @@ void setup() {
              bufferCount, (uint8_t)BUFFER_MAX, nvsCount, (uint8_t)FLASH_MAX);
     }
 
-    // ── Buffer ────────────────────────────────────────────────────────────────
-    // Měření s timestamp==0 zahazujeme — nastává při prvním bootu nebo po výpadku
-    // napájení, kdy WiFi selže a NTP se nikdy neprovedl. Data bez časového kontextu
-    // nemají v time-series databázi smysl (TMEP by jim přiřadil čas odeslání).
+    // buffer — timestamp==0 zahazujeme (WiFi selhala, NTP nikdy neprovedl)
     DLOGLN(2, "\n[Buffer]");
     // Validace fyzikálně smysluplných hodnot
-    bool validT  = (m.temperature  < -60.f || m.temperature  > 85.f);
-    bool validRH = (m.relHumidity  > 105.f);
-    if (validT)  DLOG(1, "  [!] Teplota mimo rozsah (%.1f°C) — ukládám jako nedostupnou\n", m.temperature);
-    if (validRH) DLOG(1, "  [!] Vlhkost mimo rozsah (%.1f%%) — ukládám jako nedostupnou\n", m.relHumidity);
-    if (validT)  { m.temperature = -100.f; m.relHumidity = -1.f; m.absHumidity = -1.f; }
-    if (validRH) { m.relHumidity = -1.f; m.absHumidity = -1.f; }
+    bool invalidT  = (m.temperature  < -60.f || m.temperature  > 85.f);
+    bool invalidRH = (m.relHumidity  > 105.f);
+    if (invalidT)  DLOG(1, "  [!] Teplota mimo rozsah (%.1f°C) — ukládám jako nedostupnou\n", m.temperature);
+    if (invalidRH) DLOG(1, "  [!] Vlhkost mimo rozsah (%.1f%%) — ukládám jako nedostupnou\n", m.relHumidity);
+    if (invalidT)  { m.temperature = -100.f; m.relHumidity = -1.f; m.absHumidity = -1.f; }
+    if (invalidRH) { m.relHumidity = -1.f; m.absHumidity = -1.f; }
 
     if (m.timestamp == 0) {
         DLOGLN(1, "  [!] Měření zahozeno — žádný čas (WiFi nedostupná při prvním bootu)");
@@ -1087,7 +1059,7 @@ void setup() {
 
     if (debugLevel >= 2) {
         uint8_t cnt0 = 0, cnt1 = 0;
-        for (uint8_t i = 0; i < bufferCount; i++) {
+        for (uint16_t i = 0; i < bufferCount; i++) {
             if      (buffer[i].tier == 0) cnt0++;
             else if (buffer[i].tier == 1) cnt1++;
         }
@@ -1098,7 +1070,7 @@ void setup() {
         DLOG(2, "  Sent NVS: S1:%u S2:%u S3:%u\n", nvs1Sent, nvs2Sent, nvs3Sent);
     }
 
-    // ── Odesílání ─────────────────────────────────────────────────────────────
+    // odesílání
     if (wifiConnected) {
         DLOGLN(1, "\n[Odesílání]");
 #ifdef TEST_SEND
@@ -1110,7 +1082,7 @@ void setup() {
         WiFi.disconnect(true);
     }
 
-    // ── Spánek ────────────────────────────────────────────────────────────────
+    // spánek
     digitalWrite(PIN_I2C_PWR, LOW);
     unsigned long elapsedMs = millis() - startMs;
     lastRunDuration = (uint8_t)min(elapsedMs / 1000UL, 255UL);  // uložit pro příští cyklus
