@@ -444,7 +444,7 @@ String buildCsvFrom(const Measurement* buf, uint8_t from, uint8_t count,
             csv += buildCsvRow(m.timestamp,
                                m.pcbTemp > -99.f ? String(m.pcbTemp, 1) : "",
                                String(m.powerLossCnt),
-                               m.runDuration > 0 ? String(m.runDuration) : "",
+                               String(m.runDuration),
                                m.batVoltage, rssi);
     }
     csv.trim();
@@ -880,6 +880,7 @@ void checkBootButton() {
         Preferences p;
         p.begin("meteo", false);
         p.putUChar("btnact", zone);
+        if (zone == 3 || zone == 4) p.putUChar("ploss", 0);  // factory reset → nuluj čítač výpadků
         p.end();
     }
     rtcMagic = 0;
