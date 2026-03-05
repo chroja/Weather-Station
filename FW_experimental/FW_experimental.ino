@@ -16,7 +16,7 @@
  */
 
 // testovací provoz
-#define TEST_MODE           // zapne testovací URL
+//#define TEST_MODE           // zapne testovací URL
 //#define CLEAR_BUFFERS     // jednorázové vymazání všech bufferů (RTC + NVS); po nahrání zakomentuj
 
 // Interní kód: HTTP 400 + staré datum → přeskočit nejstarší záznam (viz HTTP_STALE_RESPONSE)
@@ -404,10 +404,10 @@ void tieredCompact() {
 // Odeslání — HTTPS batch POST
 
 String buildCsvRow(uint32_t ts,
-                   const String& g1, const String& g2, const String& g3,
+                   const String& guid1, const String& guid2, const String& guid3,
                    float voltage, int rssi) {
     return formatTimestamp(ts)
-         + ";" + g1 + ";" + g2 + ";" + g3
+         + ";" + guid1 + ";" + guid2 + ";" + guid3
          + ";" + String(voltage, 3)
          + ";" + String(rssi)
          + "\n";

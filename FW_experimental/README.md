@@ -107,9 +107,9 @@ Na [tmep.cz](https://tmep.cz) vytvoř tři nové senzory:
 
 | Senzor | Doporučený název | Kanály |
 |---|---|---|
-| S1 | Meteo — teplota/vlhkost/tlak | G1=teplota (°C), G2=rel. vlhkost (%), G3=tlak (hPa), voltage=baterie (V), rssi=WiFi (dBm) |
-| S2 | Meteo — světlo/UV/abs.vlhkost | G1=světlo ALS, G2=UV index, G3=abs. vlhkost (g/m³), voltage=baterie (V), rssi=WiFi (dBm) |
-| S3 | Meteo — diagnostika | G1=PCB teplota (°C), G2=výpadky napájení, G3=délka runu (s), voltage=baterie (V), rssi=WiFi (dBm) |
+| S1 | Meteo — teplota/vlhkost/tlak | GUID=teplota (°C), GUID 2=rel. vlhkost (%), GUID 3=tlak (hPa) |
+| S2 | Meteo — světlo/UV/abs.vlhkost | GUID=světlo ALS, GUID 2=UV index, GUID 3=abs. vlhkost (g/m³) |
+| S3 | Meteo — diagnostika | GUID=PCB teplota (°C), GUID 2=výpadky napájení, GUID 3=délka runu (s) |
 
 ### 3.2 Zjistit URL senzorů
 
@@ -125,25 +125,22 @@ Tuto URL (bez lomítka na konci) zkopíruj do `secrets.h` — viz sekce 4.2.
 V nastavení každého senzoru nastav popisky kanálů:
 
 **S1:**
-- Kanál 1 (G1): `Teplota` — jednotka `°C`
-- Kanál 2 (G2): `Vlhkost` — jednotka `%`
-- Kanál 3 (G3): `Tlak` — jednotka `hPa`
-- Kanál 4 (voltage): `Baterie` — jednotka `V`
-- Kanál 5 (rssi): `WiFi RSSI` — jednotka `dBm`
+- GUID (1. hodnota): název `Teplota` — jednotka `°C`
+- GUID 2 (2. hodnota): název `Vlhkost` — jednotka `%`
+- GUID 3 (3. hodnota): název `Tlak` — jednotka `hPa`
+- voltage a rssi jsou výchozí a nedají se v administraci změnit
 
 **S2:**
-- Kanál 1 (G1): `Světlo ALS`
-- Kanál 2 (G2): `UV index`
-- Kanál 3 (G3): `Abs. vlhkost` — jednotka `g/m³`
-- Kanál 4 (voltage): `Baterie` — jednotka `V`
-- Kanál 5 (rssi): `WiFi RSSI` — jednotka `dBm`
+- GUID (1. hodnota): název `Světlo ALS`
+- GUID 2 (2. hodnota): název `UV index`
+- GUID 3 (3. hodnota): název `Abs. vlhkost` — jednotka `g/m³`
+- voltage a rssi jsou výchozí a nedají se v administraci změnit
 
 **S3:**
-- Kanál 1 (G1): `PCB teplota` — jednotka `°C`  *(interní senzor ESP32, ±3–5°C odchylka)*
-- Kanál 2 (G2): `Výpadky napájení` — počet celkem od prvního spuštění (perzistentní v NVS)
-- Kanál 3 (G3): `Délka runu` — jednotka `s`  *(délka předchozího cyklu, 0 při prvním bootu)*
-- Kanál 4 (voltage): `Baterie` — jednotka `V`
-- Kanál 5 (rssi): `WiFi RSSI` — jednotka `dBm`
+- GUID (1. hodnota): název `PCB teplota` — jednotka `°C`  *(interní senzor ESP32, ±3–5°C odchylka)*
+- GUID 2 (2. hodnota): název `Výpadky napájení` — počet celkem od prvního spuštění (perzistentní v NVS)
+- GUID 3 (3. hodnota): název `Délka runu` — jednotka `s`  *(délka předchozího cyklu, 0 při prvním bootu)*
+- voltage a rssi jsou výchozí a nedají se v administraci změnit
 
 ---
 
@@ -497,11 +494,11 @@ Každý server má vlastní offset — sleduje kolik záznamů přijal.
 
 ### Datové kanály
 
-| Server | G1 | G2 | G3 | Vždy |
+| Server | GUID | GUID 2 | GUID 3 | Automaticky |
 |---|---|---|---|---|
-| S1 | teplota (°C) | rel. vlhkost (%) | tlak (hPa) | baterie (V), RSSI |
-| S2 | světlo ALS | UV index | abs. vlhkost (g/m³) | baterie (V), RSSI |
-| S3 | PCB teplota (°C) | výpadky napájení | délka runu (s) | baterie (V), RSSI |
+| S1 | teplota (°C) | rel. vlhkost (%) | tlak (hPa) | voltage, rssi |
+| S2 | světlo ALS | UV index | abs. vlhkost (g/m³) | voltage, rssi |
+| S3 | PCB teplota (°C) | výpadky napájení | délka runu (s) | voltage, rssi |
 
 ### Odolnost vůči výpadku jednoho serveru
 
@@ -679,7 +676,7 @@ Měření s `timestamp == 0` se **nezapíše do bufferu** — viz sekce 10.
 ### CSV formát odesílaný na TMEP
 
 ```
-YYYY-MM-DD HH:MM:SS;G1;G2;G3;voltage;rssi
+YYYY-MM-DD HH:MM:SS;GUID;GUID2;GUID3;voltage;rssi
 2026-03-01 14:23:05;22.45;58.32;1003.21;4.000;-58
 2026-03-01 14:24:05;22.47;58.28;1003.19;3.998;-58
 ```
