@@ -422,12 +422,16 @@ String buildCsvFrom(const Measurement* buf, uint8_t from, uint8_t count,
         const Measurement& m = buf[i];
         if (srv == 1)
             csv += buildCsvRow(m.timestamp,
-                               String(m.temperature, 2), String(m.relHumidity, 2),
-                               String(m.pressure, 2), m.batVoltage, rssi);
+                               m.temperature > -99.f ? String(m.temperature, 2) : "",
+                               m.relHumidity  >= 0.f ? String(m.relHumidity, 2) : "",
+                               m.pressure     >= 0.f ? String(m.pressure, 2)    : "",
+                               m.batVoltage, rssi);
         else if (srv == 2)
             csv += buildCsvRow(m.timestamp,
-                               String(m.als, 2), String(m.uvs, 2),
-                               String(m.absHumidity, 4), m.batVoltage, rssi);
+                               m.als         >= 0.f ? String(m.als, 2)         : "",
+                               m.uvs         >= 0.f ? String(m.uvs, 2)         : "",
+                               m.absHumidity >= 0.f ? String(m.absHumidity, 4) : "",
+                               m.batVoltage, rssi);
         else  // srv == 3: diagnostika (PCB temp + výpadky napájení + délka runu)
             csv += buildCsvRow(m.timestamp,
                                m.pcbTemp > -99.f ? String(m.pcbTemp, 1) : "",
