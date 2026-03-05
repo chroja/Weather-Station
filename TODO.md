@@ -59,7 +59,39 @@
 
 ---
 
+## Firmware — SHT40 refresh / detekce zaseknutého čidla
+
+SHT40 nabízí vestavěný ohřívač (heater), který lze použít k vysušení kondenzátu na čidle
+a zároveň jako základní test funkčnosti — správně fungující čidlo by po krátkém ohřevu
+mělo vykázat měřitelný nárůst teploty a pokles relativní vlhkosti.
+
+### Co řešit před implementací
+
+- [ ] **Spouštěcí podmínka** — kdy refresh spustit?
+  - pravidelně každých N cyklů (např. 1× za 6 hodin)?
+  - pouze při podezřelých hodnotách (RH blízko 100 % po delší dobu)?
+  - nebo kombinace obojího?
+- [ ] **Detekce "čidlo měří správně"** — definovat kritéria:
+  - po ohřevu musí teplota vzrůst alespoň o X °C
+  - po ohřevu musí RH klesnout alespoň o Y %
+  - pokud podmínky nesplněny → zalogovat jako chybu / poslat na S3 diagnostiku
+- [ ] **Dopad na baterii** — změřit a spočítat:
+  - SHT40 heater spotřeba dle datasheetu (různé výkony/doby ohřevu)
+  - celková energie na jeden refresh cyklus
+  - vliv na průměrnou spotřebu při různých intervalech spouštění
+- [ ] **Minimální napětí baterie pro spuštění** — stanovit práh:
+  - pod X V refresh neprovádět (šetřit baterii při nízkém nabití)
+  - hodnotu otestovat v praxi
+- [ ] **Testování v praxi** — ověřit chování při různých podmínkách (mlha, déšť, mráz)
+
+> *Tato sekce je zatím pouze úvaha — implementace není plánována v blízké době.*
+
+---
+
 ## Velká změna architektury — ESP-NOW + indoor gateway
+
+> *Jedná se o dlouhodobou vizi, nikoliv o něco co se bude v blízké době dít.*
+
 
 ### Fáze 1 — Venkovní jednotka: přechod na ESP-NOW
 - [ ] **DS3231 RTC** — zvážit přidání pro přesné timestampy bez NTP; relevatní až po přechodu na ESP-NOW

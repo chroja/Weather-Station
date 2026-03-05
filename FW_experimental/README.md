@@ -40,6 +40,7 @@ hodinové záznamy z NVS, pak aktuální data z RTC.
 ### Hardware
 - LaskaKit DIY Mini Weather Station (ESP32-C3)
 - SHT40 (teplota + vlhkost), BME280 (tlak), LTR390 (UV + světlo)
+- STEMMA QT / Qwiic JST SH 4-pin kabely pro propojení senzorů přes I2C (různé délky)
 - LiPol baterie 900 mAh + solární panel 5V/4W
 - USB-C kabel pro nahrání firmwaru
 

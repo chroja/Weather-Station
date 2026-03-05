@@ -22,6 +22,7 @@ Použité moduly od LaskaKit:
 - **[SHT40](https://www.laskakit.cz/laskakit-sht40-senzor-teploty-a-vlhkosti-vzduchu/)** — senzor teploty a relativní vlhkosti
 - **[BME280](https://www.laskakit.cz/arduino-senzor-tlaku--teploty-a-vlhkosti-bme280/)** — senzor atmosferického tlaku
 - **[LTR390](https://www.laskakit.cz/laskakit-ltr390-uv-senzor/)** — UV index a ambient light senzor
+- **[STEMMA QT / Qwiic JST SH 4-pin kabel](https://www.laskakit.cz/--sup--stemma-qt--qwiic-jst-sh-4-pin-kabel-5cm/)** — propojení senzorů přes I2C (dostupný v různých délkách)
 
 ### 🌤️ [TMEP.cz](https://tmep.cz)
 
