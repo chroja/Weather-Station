@@ -31,6 +31,7 @@
 // ── Konfigurace chování ───────────────────────────────────────────────────────
 #define SLEEP_SEC        60   // cílová perioda měření v sekundách (včetně doby běhu)
 #define SLEEP_MIN_SEC    30   // minimální spánek při překročení SLEEP_SEC (sekundy)
+#define BOOT_OVERHEAD_MS 60   // boot čas před millis() (ROM bootloader z deep sleep) — kompenzace driftu
 #define WIFI_TIMEOUT_SEC 10   // max. čekání na WiFi připojení (sekundy)
 #define HTTP_TIMEOUT_SEC  8   // max. čekání na odpověď HTTP serveru (sekundy)
 

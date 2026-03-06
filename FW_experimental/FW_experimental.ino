@@ -1005,8 +1005,8 @@ void setup() {
             ? (uint8_t)tenths
             : (uint8_t)min(135UL + elapsedMs / 1000UL, 255UL);
     }
-    uint64_t sleepUs = (SLEEP_SEC * 1000UL > elapsedMs)
-                       ? ((uint64_t)(SLEEP_SEC * 1000UL - elapsedMs)) * 1000ULL
+    uint64_t sleepUs = (SLEEP_SEC * 1000UL > elapsedMs + BOOT_OVERHEAD_MS)
+                       ? ((uint64_t)(SLEEP_SEC * 1000UL - elapsedMs - BOOT_OVERHEAD_MS)) * 1000ULL
                        : (uint64_t)SLEEP_MIN_SEC * 1000000ULL;
     DLOG(1, "\n[Spánek] běh:%lu ms → spánek:%llu ms\n\n", elapsedMs, sleepUs / 1000ULL);
     esp_sleep_enable_timer_wakeup(sleepUs);
