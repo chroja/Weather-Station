@@ -166,7 +166,8 @@ void readLTR390(Measurement& m) {
     ltr.setResolution(LTR390_RESOLUTION_18BIT);
     DPRINT(2, "  LTR390: UVS...");
     ltr.setMode(LTR390_MODE_UVS);
-    delay(500);
+    ltr.readUVS();   // vyčistí DATA_STATUS ze starého ALS měření (jinak vrátí 0)
+    delay(600);      // čekej na čerstvé UV měření (18bit = 100ms integrace + rezerva)
     if (ltr.newDataAvailable()) {
         m.uvs = ltr.readUVS();
         DLOG(2, " %.2f\n", m.uvs);
