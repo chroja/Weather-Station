@@ -134,8 +134,6 @@ Klasická OTA (Arduino OTA / `httpUpdate`) vyžaduje aby zařízení zůstalo bd
   pokud soubor obsahuje `OTA=1`, zůstane bdělé a stáhne firmware přes `httpUpdate`
   - výhoda: nepotřebuje tlačítko, funguje přes existující WiFi
   - nevýhoda: každý boot = 1 HTTP request navíc (~100 ms, malá spotřeba)
-- [ ] **Trigger přes TMEP** — TMEP by mohl vracet speciální odpověď na POST, která signalizuje "čekej na OTA"
-  - závisí na spolupráci s Michalem Ševčíkem
 - [ ] **Prodloužení bdělosti při detekci OTA** — po detekci příznaku přeskočit spánek a spustit OTA server
   - zařízení se stane dočasně dostupné přes WiFi pro Arduino OTA tool nebo webový upload
 - [ ] **Zvážit OTA přes indoor gateway** (až bude ESP-NOW architektura) — gateway má stálé napájení
