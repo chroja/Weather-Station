@@ -123,6 +123,32 @@ mělo vykázat měřitelný nárůst teploty a pokles relativní vlhkosti.
 
 ---
 
+## Budoucí směr — univerzální firmware + konfigurace přes web portál
+
+> *Dlouhodobá vize. Jednotlivé kroky jsou na sobě závislé — vhodné řešit najednou jako větší refaktoring.*
+
+### Cíl
+Firmware bez `secrets.h` — binárka neobsahuje žádné privátní údaje, vše se konfiguruje přes webový portál a ukládá do NVS flash. Jeden zkompilovaný `.bin` funguje pro libovolnou stanici s libovolnou kombinací čidel.
+
+### Kroky
+
+- [ ] **Secrets z NVS místo secrets.h** — server URLs přesunout z `secrets.h` do `Preferences` (NVS);
+  při prvním bootu (prázdné NVS) spustit konfigurační portál
+- [ ] **Rozšíření WiFiManager portálu o URL pole** — `WiFiManagerParameter` pro každý server URL;
+  uložit do NVS po konfiguraci; `secrets.h` pak nepotřeba vůbec
+- [ ] **Auto-detekce čidel přes I2C scan** — při každém bootu projít I2C bus, zaznamenat přítomná čidla;
+  inicializovat a měřit pouze detekovaná čidla
+  - SHT40/SHT45 = 0x44, BME280/BME688 = 0x76/0x77, LTR390 = 0x53
+  - INA219/INA226 = 0x40–0x4F (solární panel), SCD41 = 0x62 (CO2), SGP41 = 0x59 (VOC/NOx)
+- [ ] **Podmíněné odesílání podle detekovaných čidel** — S1 jen pokud SHT40 nebo BME280 přítomen;
+  S2 jen pokud LTR390 přítomen; S3 (diagnostika) vždy
+- [ ] **Trigger portálu při novém čidle** — pokud I2C scan odhalí čidlo bez přiřazené URL v NVS,
+  automaticky spustit konfigurační portál pro doplnění
+- [ ] **Generická OTA binárka** — po přesunu secrets do NVS lze `.bin` hostovat bez rizika úniku secrets;
+  kombinovat s OTA flag přístupem (viz sekce OTA)
+
+---
+
 ## OTA update — bez fyzického přístupu
 
 Stanice je namontovaná venku bez přístupu k tlačítku ani USB.
